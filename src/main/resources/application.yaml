@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: ordersystem
+  jpa:
+    show-sql: 'true'
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+  datasource:
+    password: postgres
+    username: postgres
+    url: jdbc:postgresql://localhost:5432/ordersystem_db
