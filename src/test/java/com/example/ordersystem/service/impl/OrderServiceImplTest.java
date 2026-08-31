@@ -10,10 +10,7 @@ import com.example.ordersystem.dto.response.OrderResponse;
 import com.example.ordersystem.entity.*;
 import com.example.ordersystem.enums.OrderStatus;
 import com.example.ordersystem.enums.ProductStatus;
-import com.example.ordersystem.exception.DuplicateProductInOrderException;
-import com.example.ordersystem.exception.InsufficientStockException;
-import com.example.ordersystem.exception.ProductNotAvailableException;
-import com.example.ordersystem.exception.ResourceNotFoundException;
+import com.example.ordersystem.exception.*;
 import com.example.ordersystem.mapper.OrderMapper;
 import com.example.ordersystem.repository.CustomerRepository;
 import com.example.ordersystem.repository.OrderRepository;
@@ -21,6 +18,8 @@ import com.example.ordersystem.repository.ProductRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Captor;
 import org.mockito.InjectMocks;
@@ -29,6 +28,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -53,6 +53,9 @@ public class OrderServiceImplTest {
 
     @Captor
     private ArgumentCaptor<Order> orderArgumentCaptor;
+
+    @Captor
+    private ArgumentCaptor<Set<Long>> productIdsCaptor;
 
     Instant createdAt = Instant.parse("2026-08-29T10:00:00Z");
 
@@ -546,6 +549,346 @@ public class OrderServiceImplTest {
         verify(customerRepository).findById(customer.getId());
         verify(productRepository).findAllByIdInWithLock(Set.of(product1Id, product2Id));
         verify(orderRepository).save(any(Order.class));
+        verifyNoInteractions(orderMapper);
+    }
+
+    @Test
+    @DisplayName("Get Order Unit Test 1 (Happy Path): Sipariş müşteriyle eşleştiğinde OrderResponse ve mapper doğru parametrelerle dönmeli")
+    void getOrderDetail_whenOrderExistsAndBelongsToCustomer_shouldReturnOrderDetailResponse() {
+        Long orderId  = 100L;
+
+        Customer customer = createCustomer();
+
+        Product product = createProduct(10L, "Product 1", ProductStatus.ACTIVE, 10, BigDecimal.valueOf(225));
+
+        Order mockOrder = new Order(OrderStatus.PENDING, customer, customer.getPhone(), customer.getFirstName(), customer.getLastName(), customer.getEmail(), BigDecimal.valueOf(450), createdAt);
+        mockOrder.setId(orderId);
+
+        OrderItem orderItem = new OrderItem(product.getId(), product.getName(), 2, new BigDecimal("225.00"), BigDecimal.valueOf(450));
+        when(mockOrder.getItems()).thenReturn(List.of(orderItem));
+
+        AddressResponse shippingAddrResp = new AddressResponse("Ev Adresi", "İstanbul", "Kadıköy", "34710", "Türkiye", "Moda Cad. No:1", "D 2");
+        AddressResponse billingAddrResp = new AddressResponse("Fatura Adresi", "Ankara", "Çankaya", "06540", "Türkiye", "Atatürk Bulvarı No:100", "Kat 2");
+        OrderItemResponse itemResponse = new OrderItemResponse(11L, product.getId(), product.getName(), 2, new BigDecimal("225.00"), BigDecimal.ZERO, BigDecimal.valueOf(450));
+
+        OrderResponse expectedResponse = new OrderResponse(
+                orderId,
+                createdAt,
+                OrderStatus.PENDING,
+                customer.getId(),
+                new BigDecimal("450.00"),
+                List.of(itemResponse),
+                shippingAddrResp,
+                billingAddrResp
+        );
+
+        when(orderRepository.findByIdAndCustomerId(orderId, customer.getId())).thenReturn(Optional.of(mockOrder));
+        when(orderMapper.toOrderResponse(mockOrder)).thenReturn(expectedResponse);
+
+        CurrentUser currentUser = new CurrentUser(customer.getId());
+        OrderResponse actualReponse = orderServiceImpl.getOrderById(orderId, currentUser);
+        assertNotNull(actualReponse);
+        assertEquals(orderId, actualReponse.id());
+        assertEquals(customer.getId(), actualReponse.customerId());
+        assertEquals(OrderStatus.PENDING, actualReponse.status());
+        assertEquals(0, new BigDecimal("450.00").compareTo(actualReponse.totalAmount()));
+        assertEquals(1, actualReponse.items().size());
+
+        verify(orderRepository).findByIdAndCustomerId(orderId, customer.getId());
+        verify(orderMapper).toOrderResponse(mockOrder);
+    }
+
+    @Test
+    @DisplayName("Get Order Unit Test 2: Sipariş bulunamadığında veya başka müşteriye ait olduğunda ResourceNotFoundException fırlatılmalı ve Mapper çalışmamalı")
+    void getOrderDetail_whenOrderDoesNotExist_shouldThrowResourceNotFoundException() {
+        Long orderId  = 999L;
+        Long customerId = 1L;
+
+        when(orderRepository.findByIdAndCustomerId(orderId, customerId)).thenReturn(Optional.empty());
+
+        CurrentUser currentUser = new CurrentUser(customerId);
+
+        ResourceNotFoundException exception = assertThrows(
+                ResourceNotFoundException.class,
+                () -> orderServiceImpl.getOrderById(orderId, currentUser),
+                "Sipariş bulunamadığında ResourceNotFoundException fırlatılmalıdır."
+        );
+
+        assertTrue(exception.getMessage().contains(String.valueOf(orderId)));
+
+        verify(orderRepository).findByIdAndCustomerId(orderId, customerId);
+        verifyNoInteractions(orderMapper);
+    }
+
+    @Test
+    @DisplayName("Get Order Unit Test 3 (IDOR Protection): Müşteri başkasına ait siparişi sorguladığında DB Optional.empty döner ve aynı ResourceNotFoundException fırlatılır")
+    void getOrderDetail_whenOrderBelongsToAnotherCustomer_shouldReturnEmptyAndThrowResourceNotFoundException() {
+        Long targetOrderId = 100L;
+        Long attackerCustomerId = 99L;
+
+        when(orderRepository.findByIdAndCustomerId(targetOrderId, attackerCustomerId))
+                .thenReturn(Optional.empty());
+
+        CurrentUser currentUser = new CurrentUser(attackerCustomerId);
+
+        ResourceNotFoundException exception = assertThrows(
+                ResourceNotFoundException.class,
+                () -> orderServiceImpl.getOrderById(targetOrderId, currentUser),
+                "Başka müşterinin siparişi sorgulandığında da ResourceNotFoundException fırlatılmalıdır."
+        );
+
+        assertTrue(exception.getMessage().contains(String.valueOf(targetOrderId)));
+
+        verify(orderRepository).findByIdAndCustomerId(targetOrderId, attackerCustomerId);
+        verifyNoInteractions(orderMapper);
+    }
+
+    @Test
+    @DisplayName("Cancel Order Unit Test 1 (Happy Path): PENDING sipariş iptal edildiğinde stoklar iade edilmeli ve status CANCELLED olmalı")
+    void cancelOrder_whenOrderIsPendingAndBelongsToCustomer_shouldCancelOrderAndRestoreStock() {
+        Long orderId = 100L;
+        Long customerId = 1L;
+        CurrentUser currentUser = new CurrentUser(customerId);
+
+        Customer customer = new Customer("Caner", "Demir", "caner@example.com", "5551234567", "pass123");
+        customer.setId(customerId);
+
+        Product productA = createProduct(10L, "Product A", ProductStatus.ACTIVE, 6, BigDecimal.valueOf(100));
+        Product productB = createProduct(20L, "Product B", ProductStatus.ACTIVE, 7, BigDecimal.valueOf(50));
+
+        Order mockOrder = new Order(OrderStatus.PENDING, customer, customer.getPhone(), customer.getFirstName(), customer.getLastName(), customer.getEmail(), BigDecimal.valueOf(350), createdAt);
+        mockOrder.setId(orderId);
+
+        OrderItem itemA = new OrderItem(productA.getId(), productA.getName(), 2, new BigDecimal("100.00"), BigDecimal.valueOf(200));
+        OrderItem itemB = new OrderItem(productB.getId(), productB.getName(), 3, new BigDecimal("50.00"),  BigDecimal.valueOf(150));
+        when(mockOrder.getItems()).thenReturn(List.of(itemA, itemB));
+
+        OrderItemResponse itemResponseA = new OrderItemResponse(11L, productA.getId(), productA.getName(), 2, new BigDecimal("100.00"), BigDecimal.ZERO, BigDecimal.valueOf(200));
+        OrderItemResponse itemResponseB = new OrderItemResponse(12L, productB.getId(), productB.getName(), 3, new BigDecimal("50.00"), BigDecimal.ZERO, BigDecimal.valueOf(150));
+        AddressResponse addressResponse = new AddressResponse("Ev Adresi", "İstanbul", "Kadıköy", "34710", "Türkiye", "Moda Cad. No:1", "D 2");
+
+        OrderResponse expectedResponse = new OrderResponse(
+                orderId,
+                createdAt,
+                OrderStatus.CANCELLED,
+                customerId,
+                new BigDecimal("350.00"),
+                List.of(itemResponseA, itemResponseB),
+                addressResponse,
+                addressResponse
+        );
+
+        when(orderRepository.findByIdAndCustomerIdWithLock(orderId, customerId))
+                .thenReturn(Optional.of(mockOrder));
+        when(productRepository.findAllByIdInWithLock(Set.of(productA.getId(), productB.getId())))
+                .thenReturn(List.of(productA, productB));
+        when(orderRepository.save(any(Order.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(orderMapper.toOrderResponse(mockOrder))
+                .thenReturn(expectedResponse);
+
+        OrderResponse actualResponse = orderServiceImpl.cancelOrder(orderId, currentUser);
+
+        assertNotNull(actualResponse);
+        assertEquals(OrderStatus.CANCELLED, actualResponse.status());
+        assertEquals(OrderStatus.CANCELLED, mockOrder.getStatus());
+
+        assertEquals(8, productA.getStock(), "Product A stoğu 6 + 2 = 8 olmalıdır.");
+        assertEquals(10, productB.getStock(), "Product B stoğu 7 + 3 = 10 olmalıdır.");
+        assertEquals(expectedResponse, actualResponse);
+
+        verify(orderRepository).findByIdAndCustomerIdWithLock(orderId, customerId);
+        verify(productRepository).findAllByIdInWithLock(Set.of(productA.getId(), productB.getId()));
+        verify(orderRepository).save(mockOrder);
+        verify(orderMapper).toOrderResponse(mockOrder);
+    }
+
+    @Test
+    @DisplayName("Cancel Order Unit Test 2 (Cancel IDOR Protection): Başka müşterinin siparişi iptal edilmeye çalışıldığında ResourceNotFoundException fırlatılmalı ve hiçbir veritabanı/yazma işlemi gerçekleşmemeli")
+    void cancelOrder_whenOrderDoesNotExistOrBelongsToAnotherCustomer_shouldThrowResourceNotFoundException() {
+        Long targetOrderId = 100L;
+        Long attackerCustomerId = 99L;
+        CurrentUser currentUser = new CurrentUser(attackerCustomerId);
+
+        when(orderRepository.findByIdAndCustomerIdWithLock(targetOrderId, attackerCustomerId))
+                .thenReturn(Optional.empty());
+
+        ResourceNotFoundException exception = assertThrows(
+                ResourceNotFoundException.class,
+                () -> orderServiceImpl.cancelOrder(targetOrderId, currentUser),
+                "Başka bir müşterinin siparişi iptal edilmeye çalışıldığında ResourceNotFoundException fırlatılmalıdır."
+        );
+
+        assertTrue(exception.getMessage().contains(targetOrderId.toString()));
+
+        verify(orderRepository).findByIdAndCustomerIdWithLock(targetOrderId, attackerCustomerId);
+        verify(orderRepository, never()).save(any());
+        verifyNoInteractions(productRepository);
+        verifyNoInteractions(orderMapper);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = OrderStatus.class, names = {"PENDING"}, mode = EnumSource.Mode.EXCLUDE)
+    @DisplayName("Cancel Order Unit Test 3: Sipariş durumu PENDING dışında bir değer olduğunda OrderCannotBeCancelledException fırlatılmalı, kilit alınmamalı ve stok değişmemeli")
+    void cancelOrder_whenOrderStatusIsNotPending_shouldThrowOrderCannotBeCancelledException(OrderStatus nonPendingStatus) {
+        Long orderId = 100L;
+        Long customerId = 1L;
+        CurrentUser currentUser = new CurrentUser(customerId);
+
+        Customer customer = new Customer("Caner", "Demir", "caner@example.com", "5551234567", "pass123");
+        customer.setId(customerId);
+
+        Product productA = createProduct(10L, "Product A", ProductStatus.ACTIVE, 5, BigDecimal.valueOf(100));
+
+        Order mockOrder = new Order(nonPendingStatus, customer, customer.getPhone(), customer.getFirstName(), customer.getLastName(), customer.getEmail(), BigDecimal.valueOf(200), createdAt);
+        mockOrder.setId(orderId);
+
+        OrderItem itemA = new OrderItem(productA.getId(), productA.getName(), 2, new BigDecimal("100.00"), BigDecimal.valueOf(200));
+        when(mockOrder.getItems()).thenReturn(List.of(itemA));
+
+        when(orderRepository.findByIdAndCustomerIdWithLock(orderId, customerId))
+                .thenReturn(Optional.of(mockOrder));
+
+        OrderCannotBeCancelledException exception = assertThrows(
+                OrderCannotBeCancelledException.class,
+                () -> orderServiceImpl.cancelOrder(orderId, currentUser),
+                "PENDING dışındaki siparişler için OrderCannotBeCancelledException fırlatılmalıdır."
+        );
+
+        assertTrue(exception.getMessage().contains(orderId.toString()));
+
+        assertEquals(5, productA.getStock(), "İptal başarısız olduğu için stok miktarı değişmemelidir.");
+
+        verify(orderRepository).findByIdAndCustomerIdWithLock(orderId, customerId);
+        verifyNoInteractions(productRepository);
+        verify(orderRepository, never()).save(any());
+        verifyNoInteractions(orderMapper);
+    }
+
+    @Test
+    @DisplayName("Cancel Order Unit Test 4: Siparişteki tüm ürün ID'leri Set olarak toplanıp lock repository'sine gönderilmeli ve her ürünün stoğu doğru miktarda (2 ve 4) artırılmalı")
+    void cancelOrder_shouldCollectProductIdsAsSetAndIncreaseStockForEveryProduct() {
+        // GIVEN
+        Long orderId = 100L;
+        Long customerId = 1L;
+        CurrentUser  currentUser = new CurrentUser(customerId);
+
+        Customer customer = new Customer("Caner", "Demir", "caner@example.com", "5551234567", "pass123");
+        customer.setId(customerId);
+
+        Product productA = createProduct(10L, "Product A", ProductStatus.ACTIVE, 10, BigDecimal.valueOf(100));
+        Product productB = createProduct(20L, "Product B", ProductStatus.ACTIVE, 15, BigDecimal.valueOf(50));
+
+        Order mockOrder = new Order(OrderStatus.PENDING, customer, customer.getPhone(), customer.getFirstName(), customer.getLastName(), customer.getEmail(), BigDecimal.valueOf(400), createdAt);
+        mockOrder.setId(orderId);
+
+        OrderItem itemA = new OrderItem(productA.getId(), productA.getName(), 2, new BigDecimal("100.00"), BigDecimal.valueOf(200));
+        OrderItem itemB = new OrderItem(productB.getId(), productB.getName(), 4, new BigDecimal("50.00"), BigDecimal.valueOf(200));
+        when(mockOrder.getItems()).thenReturn(List.of(itemA, itemB));
+
+        when(orderRepository.findByIdAndCustomerIdWithLock(orderId, customerId))
+                .thenReturn(Optional.of(mockOrder));
+        when(productRepository.findAllByIdInWithLock(any()))
+                .thenReturn(List.of(productA, productB));
+        when(orderRepository.save(any(Order.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        orderServiceImpl.cancelOrder(orderId, currentUser);
+
+        verify(productRepository).findAllByIdInWithLock(productIdsCaptor.capture());
+        Set<Long> capturedProductIds = productIdsCaptor.getValue();
+
+        assertEquals(2, capturedProductIds.size(), "Lock repository'sine gönderilen ID kümesi 2 elemanlı olmalıdır.");
+        assertTrue(capturedProductIds.contains(10L), "ID kümesi Product A'nın ID'sini (10) içermelidir.");
+        assertTrue(capturedProductIds.contains(20L), "ID kümesi Product B'nin ID'sini (20) içermelidir.");
+
+        verify(productA).increaseStock(2);
+        verify(productB).increaseStock(4);
+
+        assertEquals(12, productA.getStock(), "Product A stoğu (10 + 2 = 12) olmalıdır.");
+        assertEquals(19, productB.getStock(), "Product B stoğu (15 + 4 = 19) olmalıdır.");
+    }
+
+    @Test
+    @DisplayName("Cancel Order Unit Test 5: Lock sorgusu sonucunda sipariş kalemi olan bir ürün DB'de bulunamazsa ResourceNotFoundException fırlatılmalı ve save yapılmamalı")
+    void cancelOrder_whenProductNotFoundInLockQuery_shouldThrowResourceNotFoundException() {
+        Long orderId = 100L;
+        Long customerId = 1L;
+        Long missingProductId = 99L;
+        CurrentUser  currentUser = new CurrentUser(customerId);
+
+        Customer customer = new Customer("Caner", "Demir", "caner@example.com", "5551234567", "pass123");
+        customer.setId(customerId);
+
+        Product missingProduct = createProduct(missingProductId, "Missing Product", ProductStatus.ACTIVE, 10, BigDecimal.valueOf(100));
+
+        Order mockOrder = new Order(OrderStatus.PENDING, customer, customer.getPhone(), customer.getFirstName(), customer.getLastName(), customer.getEmail(), BigDecimal.valueOf(200), createdAt);
+        mockOrder.setId(orderId);
+
+        OrderItem item = new OrderItem(missingProductId, missingProduct.getName(), 2, new BigDecimal("100.00"), BigDecimal.valueOf(200));
+        when(mockOrder.getItems()).thenReturn(List.of(item));
+
+        when(orderRepository.findByIdAndCustomerIdWithLock(orderId, customerId))
+                .thenReturn(Optional.of(mockOrder));
+        when(productRepository.findAllByIdInWithLock(Set.of(missingProductId)))
+                .thenReturn(Collections.emptyList());
+
+        ResourceNotFoundException exception = assertThrows(
+                ResourceNotFoundException.class,
+                () -> orderServiceImpl.cancelOrder(orderId, currentUser),
+                "Lock sorgusunda ürün bulunamadığında ResourceNotFoundException fırlatılmalıdır."
+        );
+
+        assertTrue(exception.getMessage().contains(missingProductId.toString()));
+
+        verify(orderRepository).findByIdAndCustomerIdWithLock(orderId, customerId);
+        verify(productRepository).findAllByIdInWithLock(Set.of(missingProductId));
+        verify(orderRepository, never()).save(any());
+        verifyNoInteractions(orderMapper);
+    }
+
+    @Test
+    @DisplayName("Cancel Order Unit Test 6: Ürün stoğu artırılırken RuntimeException fırlatılırsa hata yukarı fırlatılmalı, save ve mapper çağrılmamalı")
+    void cancelOrder_whenIncreaseStockThrowsException_shouldPropagateExceptionAndNotSaveOrder() {
+        Long orderId = 100L;
+        Long customerId = 1L;
+        CurrentUser  currentUser = new CurrentUser(customerId);
+
+        Customer customer = new Customer("Caner", "Demir", "caner@example.com", "5551234567", "pass123");
+        customer.setId(customerId);
+
+        Product productA = createProduct(10L, "Product A", ProductStatus.ACTIVE, 5, BigDecimal.valueOf(100));
+        Product productB = createProduct(20L, "Product B", ProductStatus.ACTIVE, 10, BigDecimal.valueOf(50));
+
+        doThrow(new RuntimeException("Stock calculation error or invariant violation"))
+                .when(productB).increaseStock(3);
+
+        Order mockOrder = new Order(OrderStatus.PENDING, customer, customer.getPhone(), customer.getFirstName(), customer.getLastName(), customer.getEmail(), BigDecimal.valueOf(350), createdAt);
+        mockOrder.setId(orderId);
+
+        OrderItem itemA = new OrderItem(productA.getId(), productA.getName(), 2, new BigDecimal("100.00"), BigDecimal.valueOf(200));
+        OrderItem itemB = new OrderItem(productB.getId(), productB.getName(), 3, new BigDecimal("50.00"),  BigDecimal.valueOf(150));
+        when(mockOrder.getItems()).thenReturn(List.of(itemA, itemB));
+
+        when(orderRepository.findByIdAndCustomerIdWithLock(orderId, customerId))
+                .thenReturn(Optional.of(mockOrder));
+        when(productRepository.findAllByIdInWithLock(Set.of(10L, 20L)))
+                .thenReturn(List.of(productA, productB));
+
+        RuntimeException exception = assertThrows(
+                RuntimeException.class,
+                () -> orderServiceImpl.cancelOrder(orderId, currentUser),
+                "Ürün stok güncelemesinde fırlatılan RuntimeException yukarı iletilmelidir."
+        );
+
+        assertEquals("Stock calculation error or invariant violation", exception.getMessage());
+
+        verify(orderRepository).findByIdAndCustomerIdWithLock(orderId, customerId);
+        verify(productRepository).findAllByIdInWithLock(Set.of(10L, 20L));
+
+        verify(productA).increaseStock(2);
+        verify(productB).increaseStock(3);
+        verify(orderRepository, never()).save(any());
         verifyNoInteractions(orderMapper);
     }
 

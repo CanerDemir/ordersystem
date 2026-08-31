@@ -67,4 +67,12 @@ public class Product {
 
         this.stock -= quantity;
     }
+
+    public void increaseStock(Integer quantity) {
+        if (quantity == null || quantity <= 0) {
+            throw new IllegalArgumentException( "Quantity must be greater than zero. Provided Quantity: " + quantity );
+        }
+
+        this.stock += quantity;
+    }
 }

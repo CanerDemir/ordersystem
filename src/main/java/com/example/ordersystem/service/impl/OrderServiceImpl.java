@@ -7,10 +7,7 @@ import com.example.ordersystem.dto.response.OrderResponse;
 import com.example.ordersystem.entity.*;
 import com.example.ordersystem.enums.OrderStatus;
 import com.example.ordersystem.enums.ProductStatus;
-import com.example.ordersystem.exception.DuplicateProductInOrderException;
-import com.example.ordersystem.exception.InsufficientStockException;
-import com.example.ordersystem.exception.ProductNotAvailableException;
-import com.example.ordersystem.exception.ResourceNotFoundException;
+import com.example.ordersystem.exception.*;
 import com.example.ordersystem.mapper.OrderMapper;
 import com.example.ordersystem.repository.CustomerRepository;
 import com.example.ordersystem.repository.OrderRepository;
@@ -23,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -103,6 +101,40 @@ public class OrderServiceImpl implements OrderService {
 
         Order savedOrder = orderRepository.save(order);
 
+        return orderMapper.toOrderResponse(savedOrder);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public OrderResponse getOrderById(Long orderId, CurrentUser user) {
+        Order order = orderRepository.findByIdAndCustomerId(orderId, user.customerId()).orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
+        return orderMapper.toOrderResponse(order);
+    }
+
+    @Override
+    @Transactional
+    public OrderResponse cancelOrder(Long orderId, CurrentUser user) {
+        Order order = orderRepository.findByIdAndCustomerIdWithLock(orderId, user.customerId()).orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
+
+        if (order.getStatus() != OrderStatus.PENDING) {
+            throw new OrderCannotBeCancelledException(orderId);
+        }
+
+        Set<Long> productIds = order.getItems().stream().map(OrderItem::getProductId).collect(Collectors.toSet());
+        List<Product> lockedProducts = productRepository.findAllByIdInWithLock(productIds);
+        Map<Long, Product> productMap = lockedProducts.stream().collect(Collectors.toMap(Product::getId, Function.identity()));
+
+        for (OrderItem orderItem : order.getItems()) {
+            Long productId = orderItem.getProductId();
+            Product product = productMap.get(productId);
+            if (product == null) {
+                throw new ResourceNotFoundException("Product", productId);
+            }
+            product.increaseStock(orderItem.getQuantity());
+        }
+
+        order.setStatus(OrderStatus.CANCELLED);
+        Order savedOrder = orderRepository.save(order);
         return orderMapper.toOrderResponse(savedOrder);
     }
 

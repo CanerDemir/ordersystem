@@ -6,4 +6,6 @@ import com.example.ordersystem.auth.CurrentUser;
 
 public interface OrderService {
     OrderResponse createOrder(CreateOrderRequest request, CurrentUser user);
+    OrderResponse getOrderById(Long orderId, CurrentUser user);
+    OrderResponse cancelOrder(Long orderId, CurrentUser user);
 }
