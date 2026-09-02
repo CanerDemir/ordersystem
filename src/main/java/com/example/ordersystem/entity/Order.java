@@ -1,6 +1,8 @@
 package com.example.ordersystem.entity;
 
 import com.example.ordersystem.enums.OrderStatus;
+import com.example.ordersystem.exception.OrderCannotBeCancelledException;
+import com.example.ordersystem.exception.OrderCannotBeUpdatedException;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -111,5 +113,16 @@ public class Order {
         this.items.add(item);
         this.totalAmount = totalAmount.add(item.getLineTotal());
         item.setOrder(this);
+    }
+
+    public boolean isUpdatable() {
+        return this.status == OrderStatus.PENDING;
+    }
+
+    public void updateShippingAddress(Address address) {
+        if (!isUpdatable()) {
+            throw new OrderCannotBeUpdatedException(this.id, this.status);
+        }
+        this.shippingAddress = address;
     }
 }

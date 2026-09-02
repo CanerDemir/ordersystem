@@ -1,6 +1,7 @@
 package com.example.ordersystem.service.impl;
 
 import com.example.ordersystem.auth.CurrentUser;
+import com.example.ordersystem.dto.request.AddressRequest;
 import com.example.ordersystem.dto.request.CreateOrderRequest;
 import com.example.ordersystem.dto.request.OrderItemRequest;
 import com.example.ordersystem.dto.response.OrderResponse;
@@ -157,6 +158,23 @@ public class OrderServiceImpl implements OrderService {
         Sort deterministicSort = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
         Pageable safePageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), deterministicSort);
         return orderRepository.findOrderSummariesByCustomerId(user.customerId(), safePageable);
+    }
+
+    @Override
+    @Transactional
+    public OrderResponse updateShippingAddress(Long orderId, AddressRequest request, CurrentUser user) {
+        Order order = orderRepository.findByIdAndCustomerId(orderId, user.customerId()).orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
+        Address newShippingAddress = new Address(
+                request.title(),
+                request.city(),
+                request.district(),
+                request.zipCode(),
+                request.country(),
+                request.addressLine(),
+                request.addressDetail()
+        );
+        order.updateShippingAddress(newShippingAddress);
+        return orderMapper.toOrderResponse(order);
     }
 
     private Set<Long> extractAndValidateProductIds(List<OrderItemRequest> items) {
