@@ -4,9 +4,13 @@ import com.example.ordersystem.annotations.AuthenticatedUser;
 import com.example.ordersystem.auth.CurrentUser;
 import com.example.ordersystem.dto.request.CreateOrderRequest;
 import com.example.ordersystem.dto.response.OrderResponse;
+import com.example.ordersystem.dto.response.OrderSummaryResponse;
 import com.example.ordersystem.service.interfaces.OrderService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -33,5 +37,11 @@ public class OrderController {
     public ResponseEntity<OrderResponse> cancelOrder(@PathVariable Long orderId, @AuthenticatedUser CurrentUser currentUser) {
         OrderResponse response = orderService.cancelOrder(orderId, currentUser);
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
+    }
+
+    @GetMapping
+    public ResponseEntity<Page<OrderSummaryResponse>> getMyOrders(@AuthenticatedUser CurrentUser currentUser, @PageableDefault(page = 0, size = 20)Pageable pageable) {
+        Page<OrderSummaryResponse> orders = orderService.getCustomerOrders(currentUser, pageable);
+        return ResponseEntity.ok(orders);
     }
 }

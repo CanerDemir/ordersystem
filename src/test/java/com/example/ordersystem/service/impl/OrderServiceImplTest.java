@@ -7,6 +7,7 @@ import com.example.ordersystem.dto.request.OrderItemRequest;
 import com.example.ordersystem.dto.response.AddressResponse;
 import com.example.ordersystem.dto.response.OrderItemResponse;
 import com.example.ordersystem.dto.response.OrderResponse;
+import com.example.ordersystem.dto.response.OrderSummaryResponse;
 import com.example.ordersystem.entity.*;
 import com.example.ordersystem.enums.OrderStatus;
 import com.example.ordersystem.enums.ProductStatus;
@@ -25,13 +26,12 @@ import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.*;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.Collections;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
+import java.time.LocalDateTime;
+import java.util.*;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -890,6 +890,270 @@ public class OrderServiceImplTest {
         verify(productB).increaseStock(3);
         verify(orderRepository, never()).save(any());
         verifyNoInteractions(orderMapper);
+    }
+
+    @Test
+    @DisplayName("GetMyOrders Unit Test List 1 (Happy Path): 3 sipariş arasından page=0, size=2 istendiğinde en yeni 2 sipariş (Order 3 ve Order 2) dönmeli, totalElements=3, totalPages=2 olmalıdır")
+    void getCustomerOrders_happyPath_shouldReturnPaginatedAndSortedOrders() {
+        Instant date1 = Instant.parse("2026-08-28T10:00:00Z");
+        Instant date2 = Instant.parse("2026-08-29T10:00:00Z");
+        Instant date3 = Instant.parse("2026-08-30T10:00:00Z");
+
+        OrderSummaryResponse order1 = new OrderSummaryResponse(1L, date1, OrderStatus.PENDING, new BigDecimal("100.00"), 2);
+        OrderSummaryResponse order2 = new OrderSummaryResponse(2L, date2, OrderStatus.DELIVERED, new BigDecimal("200.00"), 3);
+        OrderSummaryResponse order3 = new OrderSummaryResponse(3L, date3, OrderStatus.CANCELLED, new BigDecimal("300.00"), 1);
+
+        Pageable requestPageable = PageRequest.of(0, 2);
+
+        List<OrderSummaryResponse> pageContent = List.of(order3, order2);
+        Page<OrderSummaryResponse> mockPage = new PageImpl<>(pageContent, requestPageable, 3);
+
+        when(orderRepository.findOrderSummariesByCustomerId(eq(1L), any(Pageable.class)))
+                .thenReturn(mockPage);
+
+        CurrentUser currentUser = new CurrentUser(1L);
+
+        Page<OrderSummaryResponse> result = orderServiceImpl.getCustomerOrders(currentUser, requestPageable);
+
+        assertNotNull(result);
+        assertEquals(3, result.getTotalElements(), "Toplam eleman sayısı 3 olmalıdır.");
+        assertEquals(2, result.getTotalPages(), "Toplam sayfa sayısı 2 olmalıdır.");
+        assertEquals(2, result.getContent().size(), "Sayfadaki eleman sayısı 2 olmalıdır.");
+
+        assertEquals(3L, result.getContent().get(0).id(), "İlk eleman Order 3 (2026-08-30) olmalıdır.");
+        assertEquals(2L, result.getContent().get(1).id(), "İkinci eleman Order 2 (2026-08-29) olmalıdır.");
+
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(orderRepository).findOrderSummariesByCustomerId(eq(1L), pageableCaptor.capture());
+
+        Pageable capturedPageable = pageableCaptor.getValue();
+        assertEquals(0, capturedPageable.getPageNumber());
+        assertEquals(2, capturedPageable.getPageSize());
+
+        Sort sort = capturedPageable.getSort();
+        assertEquals(Sort.Order.desc("createdAt"), sort.getOrderFor("createdAt"));
+        assertEquals(Sort.Order.desc("id"), sort.getOrderFor("id"));
+    }
+
+    @Test
+    @DisplayName("GetMyOrders Unit Test List 2 (Second Page): page=1, size=2 istendiğinde yalnızca 2. sayfada kalan Order 1 dönmeli, totalElements=3, totalPages=2 ve content.size()=1 olmalıdır")
+    void getCustomerOrders_secondPage_shouldReturnRemainingOrder() {
+        // GIVEN: UTC Instant Zaman Damgaları
+        Instant date1 = Instant.parse("2026-08-28T10:00:00Z");
+        Instant date2 = Instant.parse("2026-08-29T10:00:00Z");
+        Instant date3 = Instant.parse("2026-08-30T10:00:00Z");
+
+        OrderSummaryResponse order1 = new OrderSummaryResponse(1L, date1, OrderStatus.PENDING, new BigDecimal("100.00"), 2);
+
+        // Request: 2. sayfa (pageIndex = 1)
+        Pageable requestPageable = PageRequest.of(1, 2);
+
+        // Repository Mock: 2. Sayfada yalnızca Order 1 var, toplam kayıt sayısı 3
+        List<OrderSummaryResponse> secondPageContent = List.of(order1);
+        Page<OrderSummaryResponse> mockPage = new PageImpl<>(secondPageContent, requestPageable, 3);
+
+        when(orderRepository.findOrderSummariesByCustomerId(eq(1L), any(Pageable.class)))
+                .thenReturn(mockPage);
+
+        CurrentUser currentUser = new CurrentUser(1L);
+
+        // WHEN
+        Page<OrderSummaryResponse> result = orderServiceImpl.getCustomerOrders(currentUser, requestPageable);
+
+        // THEN
+        assertNotNull(result);
+        assertEquals(3, result.getTotalElements(), "Toplam eleman sayısı 3 olmalıdır.");
+        assertEquals(2, result.getTotalPages(), "Toplam sayfa sayısı 2 olmalıdır.");
+        assertEquals(1, result.getContent().size(), "İkinci sayfada yalnızca 1 eleman (Order 1) bulunmalıdır.");
+
+        // İçerik Kontrolü
+        OrderSummaryResponse returnedOrder = result.getContent().get(0);
+        assertEquals(1L, returnedOrder.id(), "İkinci sayfadaki eleman Order 1 olmalıdır.");
+        assertEquals(date1, returnedOrder.createdAt(), "Tarih 2026-08-28T10:00:00Z olmalıdır.");
+
+        // Repository Parametre Doğrulaması
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(orderRepository).findOrderSummariesByCustomerId(eq(1L), pageableCaptor.capture());
+
+        Pageable capturedPageable = pageableCaptor.getValue();
+        assertEquals(1, capturedPageable.getPageNumber(), "Sorgulanan sayfa indeksi 1 olmalıdır.");
+        assertEquals(2, capturedPageable.getPageSize(), "Sayfa boyutu 2 olmalıdır.");
+    }
+
+    @Test
+    @DisplayName("GetMyOrders Unit Test List 3 (Customer Isolation): Customer A (3 sipariş) talepte bulunduğunda yalnızca kendisine ait siparişler dönmeli, Customer B'ye (5 sipariş) ait veriler sızmamalıdır")
+    void getCustomerOrders_customerIsolation_shouldOnlyReturnAuthenticatedCustomerOrders() {
+        // GIVEN
+        Long customerAId = 1L;
+        Long customerBId = 2L;
+
+        Instant now = Instant.now();
+
+        // Customer A'ya ait 3 sipariş
+        OrderSummaryResponse orderA1 = new OrderSummaryResponse(101L, now.minusSeconds(3600), OrderStatus.DELIVERED, new BigDecimal("150.00"), 2);
+        OrderSummaryResponse orderA2 = new OrderSummaryResponse(102L, now.minusSeconds(1800), OrderStatus.DELIVERED, new BigDecimal("250.00"), 1);
+        OrderSummaryResponse orderA3 = new OrderSummaryResponse(103L, now, OrderStatus.PENDING, new BigDecimal("350.00"), 4);
+
+        Pageable requestPageable = PageRequest.of(0, 10);
+
+        // Customer A için yalnızca A'nın 3 siparişini içeren mock yanıt
+        List<OrderSummaryResponse> customerAOrders = List.of(orderA3, orderA2, orderA1);
+        Page<OrderSummaryResponse> mockPageForCustomerA = new PageImpl<>(customerAOrders, requestPageable, 3);
+
+        // Mocking: Repository çağrısı Customer A ID'si (1L) ile yapıldığında A'nın verileri döner
+        when(orderRepository.findOrderSummariesByCustomerId(eq(customerAId), any(Pageable.class)))
+                .thenReturn(mockPageForCustomerA);
+
+        CurrentUser currentUserA = new CurrentUser(customerAId);
+
+        // WHEN: Customer A (id=1L) yetkilendirme bilgisiyle servis çağrısı yapılır
+        Page<OrderSummaryResponse> result = orderServiceImpl.getCustomerOrders(currentUserA, requestPageable);
+
+        // THEN
+        assertNotNull(result);
+        assertEquals(3, result.getTotalElements(), "Customer A için totalElements tam olarak 3 olmalıdır.");
+        assertEquals(3, result.getContent().size(), "Dönen listedeki eleman sayısı 3 olmalıdır.");
+
+        // Dönen tüm siparişlerin Customer A'ya ait olduğunun doğrulanması
+        List<Long> returnedOrderIds = result.getContent().stream()
+                .map(OrderSummaryResponse::id)
+                .toList();
+
+        assertTrue(returnedOrderIds.containsAll(List.of(101L, 102L, 103L)), "Sonuç kümesi yalnızca Customer A'nın sipariş ID'lerini içermelidir.");
+
+        // ISOLATION VERIFICATION:
+        // 1. Repository'ye kesinlikle Customer A ID'sinin (1L) iletildiği doğrulanır
+        verify(orderRepository, times(1)).findOrderSummariesByCustomerId(eq(customerAId), any(Pageable.class));
+
+        // 2. Repository'nin Customer B ID'si (2L) ile HiÇ ÇAĞRILMADIĞI doğrulanır (Sızıntı engeli)
+        verify(orderRepository, never()).findOrderSummariesByCustomerId(eq(customerBId), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("GetMyOrders Unit Test List 4 (No Orders): Hiç siparişi olmayan bir müşteri sorguladığında content=[], totalElements=0 ve totalPages=0 dönmelidir")
+    void getCustomerOrders_whenNoOrders_shouldReturnEmptyPage() {
+        // GIVEN
+        Pageable requestPageable = PageRequest.of(0, 20);
+
+        // Repository hiç sipariş bulamadığında empty Page döner
+        when(orderRepository.findOrderSummariesByCustomerId(eq(1L), any(Pageable.class)))
+                .thenReturn(Page.empty(requestPageable));
+
+        CurrentUser currentUser = new CurrentUser(1L);
+
+        // WHEN
+        Page<OrderSummaryResponse> result = orderServiceImpl.getCustomerOrders(currentUser, requestPageable);
+
+        // THEN
+        assertNotNull(result);
+        assertTrue(result.getContent().isEmpty(), "Siparişi olmayan müşteri için liste boş dönmelidir.");
+        assertEquals(0, result.getTotalElements(), "totalElements 0 olmalıdır.");
+        assertEquals(0, result.getTotalPages(), "totalPages 0 olmalıdır.");
+        assertEquals(0, result.getNumberOfElements(), "Sayfadaki eleman sayısı 0 olmalıdır.");
+
+        // Repository parametre doğrulaması
+        verify(orderRepository).findOrderSummariesByCustomerId(eq(1L), any(Pageable.class));
+    }
+
+    @Test
+    @DisplayName("GetMyOrders Unit Test List 5 (Stable Ordering): Birebir aynı createdAt zaman damgasına sahip 2 sipariş olduğunda ikincil id DESC kriteri devreye girmeli ve id'si büyük olan (Order B - id:200) ilk sırada dönmelidir")
+    void getCustomerOrders_sameCreatedAt_shouldApplySecondaryIdSortDeterministically() {
+        // GIVEN: İki sipariş için birebir aynı Instant zaman damgası (Milisaniye seviyesinde eşit)
+        Instant exactSameTimestamp = Instant.parse("2026-09-01T15:30:00.000Z");
+
+        // Order A: id = 100L
+        OrderSummaryResponse orderA = new OrderSummaryResponse(
+                100L, exactSameTimestamp, OrderStatus.PENDING, new BigDecimal("150.00"), 2
+        );
+
+        // Order B: id = 200L (Aynı tarihte ancak ID'si daha büyük)
+        OrderSummaryResponse orderB = new OrderSummaryResponse(
+                200L, exactSameTimestamp, OrderStatus.SHIPPED, new BigDecimal("300.00"), 5
+        );
+
+        Pageable requestPageable = PageRequest.of(0, 10);
+
+        // Repository ikincil "id DESC" sıralamasını uyguladığı için id'si büyük olan Order B önde gelir
+        List<OrderSummaryResponse> deterministicContent = List.of(orderB, orderA);
+        Page<OrderSummaryResponse> mockPage = new PageImpl<>(deterministicContent, requestPageable, 2);
+
+        when(orderRepository.findOrderSummariesByCustomerId(eq(1L), any(Pageable.class)))
+                .thenReturn(mockPage);
+
+        CurrentUser currentUser = new CurrentUser(1L);
+
+        // WHEN
+        Page<OrderSummaryResponse> result = orderServiceImpl.getCustomerOrders(currentUser, requestPageable);
+
+        // THEN
+        assertNotNull(result);
+        assertEquals(2, result.getTotalElements());
+        assertEquals(2, result.getContent().size());
+
+        // Deterministic Sıralama Kontrolü: Tarihler eşit olduğundan ID'si büyük olan Order B (200L) ilk sırada gelmelidir
+        assertEquals(200L, result.getContent().get(0).id(), "Tarihler eşit olduğundan ikincil id DESC sıralamasıyla ID=200 ilk sırada yer almalıdır.");
+        assertEquals(100L, result.getContent().get(1).id(), "ID=100 olan ikinci sırada yer almalıdır.");
+
+        // Servis katmanının repository'ye ilettiği Sort kurallarının doğrulanması
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(orderRepository).findOrderSummariesByCustomerId(eq(1L), pageableCaptor.capture());
+
+        Pageable capturedPageable = pageableCaptor.getValue();
+        Sort sort = capturedPageable.getSort();
+
+        // Birincil ve ikincil sıralama kurallarının eksiksiz varlığı doğrulanır
+        assertNotNull(sort.getOrderFor("createdAt"), "createdAt sıralaması tanımlı olmalıdır.");
+        assertNotNull(sort.getOrderFor("id"), "Determinism için ikincil id sıralaması tanımlı olmalıdır.");
+        assertEquals(Sort.Direction.DESC, Objects.requireNonNull(sort.getOrderFor("createdAt")).getDirection());
+        assertEquals(Sort.Direction.DESC, Objects.requireNonNull(sort.getOrderFor("id")).getDirection());
+    }
+
+    @Test
+    @DisplayName("GetMyOrders Unit Test List 6 (Page Size Limit): İstemci size=101 (MAX_PAGE_SIZE=100 sınırından büyük) gönderdiğinde InvalidPageSizeException fırlatılmalı ve DB sorgusu çağrılmamalıdır")
+    void getCustomerOrders_sizeExceedsLimit_shouldThrowInvalidPageSizeException() {
+        // GIVEN
+        Pageable requestPageable = PageRequest.of(0, 101); // Kısıt aşımı (101 > 100)
+
+        CurrentUser currentUser = new CurrentUser(1L);
+
+        // WHEN & THEN
+        InvalidPageSizeException exception = assertThrows(
+                InvalidPageSizeException.class,
+                () -> orderServiceImpl.getCustomerOrders(currentUser, requestPageable),
+                "size > 100 olduğunda InvalidPageSizeException fırlatılmalıdır."
+        );
+
+        // Hata mesajı doğrulaması
+        assertEquals("Page size 101 exceeds maximum allowed limit of 100", exception.getMessage());
+
+        // Validation aşamasında patladığı için repository'nin HİÇ çağrılmadığının doğrulanması
+        verifyNoInteractions(orderRepository);
+    }
+
+    @Test
+    @DisplayName("GetMyOrders Unit Test List 7 (Invalid Page): İstemci page=-1 gönderdiğinde InvalidPageIndexException fırlatılmalı ve DB sorgusu çağrılmamalıdır")
+    void getCustomerOrders_negativePageIndex_shouldThrowInvalidPageIndexException() {
+        // GIVEN: Negatif sayfa indeksi (page = -1)
+        // PageRequest.of(-1, 20) doğrudan IllegalArgumentException fırlatacağı için
+        // Mockito veya Custom Pageable interface mock'u ile test edilir
+        Pageable mockInvalidPageable = mock(Pageable.class);
+        when(mockInvalidPageable.getPageNumber()).thenReturn(-1);
+        when(mockInvalidPageable.getPageSize()).thenReturn(20);
+
+        CurrentUser currentUser = new CurrentUser(1L);
+
+        // WHEN & THEN
+        InvalidPageIndexException exception = assertThrows(
+                InvalidPageIndexException.class,
+                () -> orderServiceImpl.getCustomerOrders(currentUser, mockInvalidPageable),
+                "page < 0 olduğunda InvalidPageIndexException fırlatılmalıdır."
+        );
+
+        // Hata mesajı doğrulaması
+        assertEquals("Page index must not be less than zero. Requested page: -1", exception.getMessage());
+
+        // Validation aşamasında patladığı için repository'nin HİÇ çağrılmadığının doğrulanması
+        verifyNoInteractions(orderRepository);
     }
 
     private static AddressRequest createAddressRequest(String title, String city, String district, String zipCode, String country, String addressLine, String addressDetail) {

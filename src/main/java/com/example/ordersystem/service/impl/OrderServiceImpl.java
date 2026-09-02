@@ -4,6 +4,7 @@ import com.example.ordersystem.auth.CurrentUser;
 import com.example.ordersystem.dto.request.CreateOrderRequest;
 import com.example.ordersystem.dto.request.OrderItemRequest;
 import com.example.ordersystem.dto.response.OrderResponse;
+import com.example.ordersystem.dto.response.OrderSummaryResponse;
 import com.example.ordersystem.entity.*;
 import com.example.ordersystem.enums.OrderStatus;
 import com.example.ordersystem.enums.ProductStatus;
@@ -14,6 +15,10 @@ import com.example.ordersystem.repository.OrderRepository;
 import com.example.ordersystem.repository.ProductRepository;
 import com.example.ordersystem.service.interfaces.OrderService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +31,8 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class OrderServiceImpl implements OrderService {
+    private static final int MAX_PAGE_SIZE = 100;
+
     private final OrderRepository orderRepository;
     private final ProductRepository productRepository;
     private final CustomerRepository customerRepository;
@@ -136,6 +143,20 @@ public class OrderServiceImpl implements OrderService {
         order.setStatus(OrderStatus.CANCELLED);
         Order savedOrder = orderRepository.save(order);
         return orderMapper.toOrderResponse(savedOrder);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Page<OrderSummaryResponse> getCustomerOrders(CurrentUser user, Pageable pageable) {
+        if (pageable.getPageNumber() < 0) {
+            throw new InvalidPageIndexException(pageable.getPageNumber());
+        }
+        if (pageable.getPageSize() > MAX_PAGE_SIZE) {
+            throw new InvalidPageSizeException(pageable.getPageSize(), MAX_PAGE_SIZE);
+        }
+        Sort deterministicSort = Sort.by(Sort.Order.desc("createdAt"), Sort.Order.desc("id"));
+        Pageable safePageable = PageRequest.of(pageable.getPageNumber(), pageable.getPageSize(), deterministicSort);
+        return orderRepository.findOrderSummariesByCustomerId(user.customerId(), safePageable);
     }
 
     private Set<Long> extractAndValidateProductIds(List<OrderItemRequest> items) {
