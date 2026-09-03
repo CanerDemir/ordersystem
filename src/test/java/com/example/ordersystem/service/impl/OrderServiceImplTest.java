@@ -1156,6 +1156,167 @@ public class OrderServiceImplTest {
         verifyNoInteractions(orderRepository);
     }
 
+    @Test
+    @DisplayName("UpdateShippingAddress Unit Test 1 (Happy Path): PENDING durumundaki siparişin shipping adresi başarıyla değiştirilmeli")
+    void updateShippingAddress_whenOrderIsPending_shouldUpdateAddressSuccessfully() {
+        // GIVEN
+        Customer customer = createCustomer();
+        AddressRequest updateRequest = new AddressRequest(
+                "Yeni Ev", "Ankara", "Çankaya", "06530", "Türkiye", "Kızılay Mah. No:10", "Daire 4"
+        );
+
+        Address initialShippingAddress = new Address("Eski Ev", "İstanbul", "Kadıköy", "34710", "Türkiye", "Moda Cad. No:5", "Daire 1");
+        Address initialBillingAddress = new Address("Şirket", "İstanbul", "Şişli", "34360", "Türkiye", "Büyükdere Cad. No:100", "Kat 5");
+        Order order = new Order(OrderStatus.PENDING, customer, customer.getPhone(), customer.getFirstName(), customer.getLastName(), customer.getEmail(), new BigDecimal("350.00"), createdAt);
+        order.setId(101L);
+        order.setShippingAddress(initialShippingAddress);
+        order.setBillingAddress(initialBillingAddress);
+
+        CurrentUser currentUser = new CurrentUser(1L);
+
+        when(orderRepository.findByIdAndCustomerId(101L, 1L))
+                .thenReturn(Optional.of(order));
+        when(orderMapper.toOrderResponse(any(Order.class)))
+                .thenReturn(mock(OrderResponse.class));
+
+        // WHEN
+        OrderResponse response = orderServiceImpl.updateShippingAddress(101L, updateRequest, currentUser);
+
+        // THEN
+        assertNotNull(response);
+        assertEquals("Ankara", order.getShippingAddress().getCity());
+        assertEquals("Çankaya", order.getShippingAddress().getDistrict());
+        assertEquals("Yeni Ev", order.getShippingAddress().getTitle());
+
+        verify(orderRepository).findByIdAndCustomerId(101L, 1L);
+    }
+
+    @Test
+    @DisplayName("UpdateShippingAddress Unit Test 2 (IDOR Protection): Başka bir müşterinin sipariş ID'si gönderildiğinde OrderNotFoundException fırlatılmalı")
+    void updateShippingAddress_whenOrderBelongsToOtherCustomer_shouldThrowOrderNotFoundException() {
+        // GIVEN: Repository customerId=1L için sipariş bulamaz
+        when(orderRepository.findByIdAndCustomerId(999L, 1L))
+                .thenReturn(Optional.empty());
+
+        AddressRequest updateRequest = new AddressRequest(
+                "Yeni Ev", "Ankara", "Çankaya", "06530", "Türkiye", "Kızılay Mah. No:10", "Daire 4"
+        );
+
+        CurrentUser currentUser = new CurrentUser(1L);
+
+        // WHEN & THEN
+        assertThrows(
+                ResourceNotFoundException.class,
+                () -> orderServiceImpl.updateShippingAddress(999L, updateRequest, currentUser),
+                "Başka müşterinin siparişi için ResourceNotFoundException fırlatılmalıdır."
+        );
+
+        verify(orderRepository).findByIdAndCustomerId(999L, 1L);
+    }
+
+    @Test
+    @DisplayName("UpdateShippingAddress Unit Test 3 (CANCELLED Status): CANCELLED durumundaki sipariş güncellenmek istendiğinde OrderCannotBeUpdatedException fırlatılmalı")
+    void updateShippingAddress_whenOrderIsCancelled_shouldThrowOrderCannotBeUpdatedException() {
+        // GIVEN
+        Customer customer = createCustomer();
+        AddressRequest updateRequest = new AddressRequest(
+                "Yeni Ev", "Ankara", "Çankaya", "06530", "Türkiye", "Kızılay Mah. No:10", "Daire 4"
+        );
+
+        Address initialShippingAddress = new Address("Eski Ev", "İstanbul", "Kadıköy", "34710", "Türkiye", "Moda Cad. No:5", "Daire 1");
+        Address initialBillingAddress = new Address("Şirket", "İstanbul", "Şişli", "34360", "Türkiye", "Büyükdere Cad. No:100", "Kat 5");
+        Order cancelledOrder = mock(Order.class);
+        when(cancelledOrder.getId()).thenReturn(102L);
+        when(cancelledOrder.getCustomer()).thenReturn(customer);
+        when(cancelledOrder.getStatus()).thenReturn(OrderStatus.CANCELLED);
+        when(cancelledOrder.getShippingAddress()).thenReturn(initialShippingAddress);
+        when(cancelledOrder.getBillingAddress()).thenReturn(initialBillingAddress);
+
+        CurrentUser currentUser = new CurrentUser(1L);
+
+        when(orderRepository.findByIdAndCustomerId(102L, 1L))
+                .thenReturn(Optional.of(cancelledOrder));
+
+        // WHEN & THEN
+        OrderCannotBeUpdatedException exception = assertThrows(
+                OrderCannotBeUpdatedException.class,
+                () -> orderServiceImpl.updateShippingAddress(102L, updateRequest, currentUser)
+        );
+
+        assertTrue(exception.getMessage().contains("CANCELLED"));
+        assertEquals("İstanbul", cancelledOrder.getShippingAddress().getCity(), "Adres güncellenmemiş olmalıdır.");
+    }
+
+    @Test
+    @DisplayName("UpdateShippingAddress Unit Test 4 (SHIPPED Status): SHIPPED durumundaki sipariş güncellenmek istendiğinde OrderCannotBeUpdatedException fırlatılmalı")
+    void updateShippingAddress_whenOrderIsShipped_shouldThrowOrderCannotBeUpdatedException() {
+        // GIVEN
+        Customer customer = createCustomer();
+        AddressRequest updateRequest = new AddressRequest(
+                "Yeni Ev", "Ankara", "Çankaya", "06530", "Türkiye", "Kızılay Mah. No:10", "Daire 4"
+        );
+
+        Address initialShippingAddress = new Address("Eski Ev", "İstanbul", "Kadıköy", "34710", "Türkiye", "Moda Cad. No:5", "Daire 1");
+        Address initialBillingAddress = new Address("Şirket", "İstanbul", "Şişli", "34360", "Türkiye", "Büyükdere Cad. No:100", "Kat 5");
+        Order shippedOrder = mock(Order.class);
+        when(shippedOrder.getId()).thenReturn(103L);
+        when(shippedOrder.getCustomer()).thenReturn(customer);
+        when(shippedOrder.getStatus()).thenReturn(OrderStatus.SHIPPED);
+        when(shippedOrder.getShippingAddress()).thenReturn(initialShippingAddress);
+        when(shippedOrder.getBillingAddress()).thenReturn(initialBillingAddress);
+
+        CurrentUser currentUser = new CurrentUser(1L);
+
+        when(orderRepository.findByIdAndCustomerId(103L, 1L))
+                .thenReturn(Optional.of(shippedOrder));
+
+        // WHEN & THEN
+        OrderCannotBeUpdatedException exception = assertThrows(
+                OrderCannotBeUpdatedException.class,
+                () -> orderServiceImpl.updateShippingAddress(103L, updateRequest, currentUser)
+        );
+
+        assertTrue(exception.getMessage().contains("SHIPPED"));
+        assertEquals("İstanbul", shippedOrder.getShippingAddress().getCity(), "Adres güncellenmemiş olmalıdır.");
+    }
+
+    @Test
+    @DisplayName("Unit Test 5 (Billing Address Unchanged): Shipping adresi değişirken Billing adresi aynen kalmalı")
+    void updateShippingAddress_shouldOnlyUpdateShippingAddressAndKeepBillingAddressUnchanged() {
+        // GIVEN
+        Customer customer = createCustomer();
+        AddressRequest updateRequest = new AddressRequest(
+                "Yeni Ev", "Ankara", "Çankaya", "06530", "Türkiye", "Kızılay Mah. No:10", "Daire 4"
+        );
+
+        Address initialShippingAddress = new Address("Eski Ev", "İstanbul", "Kadıköy", "34710", "Türkiye", "Moda Cad. No:5", "Daire 1");
+        Address initialBillingAddress = new Address("Şirket", "İstanbul", "Şişli", "34360", "Türkiye", "Büyükdere Cad. No:100", "Kat 5");
+        Order order = new Order(OrderStatus.PENDING, customer, customer.getPhone(), customer.getFirstName(), customer.getLastName(), customer.getEmail(), new BigDecimal("350.00"), createdAt);
+        order.setId(104L);
+        order.setShippingAddress(initialShippingAddress);
+        order.setBillingAddress(initialBillingAddress);
+
+        CurrentUser currentUser = new CurrentUser(1L);
+
+        when(orderRepository.findByIdAndCustomerId(104L, 1L))
+                .thenReturn(Optional.of(order));
+        when(orderMapper.toOrderResponse(any(Order.class)))
+                .thenReturn(mock(OrderResponse.class));
+
+        // WHEN
+        orderServiceImpl.updateShippingAddress(104L, updateRequest, currentUser);
+
+        // THEN: Shipping güncellendi
+        assertEquals("Ankara", order.getShippingAddress().getCity());
+        assertEquals("Çankaya", order.getShippingAddress().getDistrict());
+
+        // THEN: Billing kesinlikle değişmedi (Snapshot Korundu)
+        assertEquals("Şirket", order.getBillingAddress().getTitle());
+        assertEquals("İstanbul", order.getBillingAddress().getCity());
+        assertEquals("Şişli", order.getBillingAddress().getDistrict());
+        assertEquals("Büyükdere Cad. No:100", order.getBillingAddress().getAddressLine());
+    }
+
     private static AddressRequest createAddressRequest(String title, String city, String district, String zipCode, String country, String addressLine, String addressDetail) {
         return new AddressRequest(title, city, district, zipCode, country, addressLine, addressDetail);
     }

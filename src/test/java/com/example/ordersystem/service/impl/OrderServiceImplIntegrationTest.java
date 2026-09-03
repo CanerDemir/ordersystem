@@ -22,6 +22,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -753,5 +754,76 @@ public class OrderServiceImplIntegrationTest {
         Order finalOrder = orderRepository.findById(orderId)
                 .orElseThrow(() -> new ResourceNotFoundException("Order B", orderId));
         assertEquals(OrderStatus.CANCELLED, finalOrder.getStatus(), "Sipariş statüsü CANCELLED olmalıdır.");
+    }
+
+    @Test
+    @DisplayName("UpdateShippingAddress Integration Test 1 (Dirty Checking): save() metodu çağrılmadan, transaction sonunda adresi veritabanında güncellenmelidir")
+    void updateShippingAddress_dirtyCheckingIntegrationTest() {
+        // GIVEN: Veritabanına PENDING durumunda bir sipariş kaydedilir
+        Customer customer = new Customer("Caner", "Demir", "caner@example.com", "5551234567", "pass123");
+        entityManager.persist(customer);
+        Order order = new Order(OrderStatus.PENDING, customer, customer.getPhone(), customer.getFirstName(), customer.getLastName(), customer.getEmail(), new BigDecimal("250.00"), createdAt);
+        order.setShippingAddress(new Address("Eski", "İzmir", "Konak", "35000", "TR", "Line 1", "Detail 1"));
+        order.setBillingAddress(new Address("Fatura", "İzmir", "Konak", "35000", "TR", "Line 1", "Detail 1"));
+
+        Order savedOrder = orderRepository.saveAndFlush(order);
+        Long orderId = savedOrder.getId();
+
+        AddressRequest request = new AddressRequest(
+                "Yeni Ev", "Bursa", "Nilüfer", "16000", "TR", "Yeni Sok. No:1", "Kat 2"
+        );
+
+        CurrentUser currentUser = new CurrentUser(customer.getId());
+
+        // WHEN: OrderService.updateShippingAddress çağrılır (Metot içerisinde explicit orderRepository.save() YOKTUR)
+        orderService.updateShippingAddress(orderId, request, currentUser);
+
+        // THEN: DB'den doğrudan çekilen entity'nin adresi değişmiş olmalıdır (Dirty Checking doğrulaması)
+        Order dbOrder = orderRepository.findById(orderId).orElseThrow();
+        assertEquals("Bursa", dbOrder.getShippingAddress().getCity());
+        assertEquals("Nilüfer", dbOrder.getShippingAddress().getDistrict());
+        assertEquals("Yeni Ev", dbOrder.getShippingAddress().getTitle());
+        assertEquals("Yeni Cadde No:10", dbOrder.getShippingAddress().getAddressLine());
+
+        // Billing Address'in değişmediği doğrulanır
+        assertEquals("Eski Fatura", dbOrder.getBillingAddress().getTitle());
+    }
+
+    @Test
+    @DisplayName("UpdateShippingAddress Integration Test 2 (Optimistic Locking): Çakışan iki eş zamanlı güncellemeden biri ObjectOptimisticLockingFailureException almalıdır")
+    void updateShippingAddress_optimisticLockingIntegrationTest() {
+        // GIVEN
+        Customer customer = new Customer("Caner", "Demir", "caner@example.com", "5551234567", "pass123");
+        entityManager.persist(customer);
+        Order order = new Order(OrderStatus.PENDING, customer, customer.getPhone(), customer.getFirstName(), customer.getLastName(), customer.getEmail(), new BigDecimal("100.00"), createdAt);
+        order.setShippingAddress(new Address("Başlangıç", "İstanbul", "Kadıköy", "34000", "TR", "Line", "Detail"));
+        order.setBillingAddress(new Address("Başlangıç", "İstanbul", "Kadıköy", "34000", "TR", "Line", "Detail"));
+
+        Order savedOrder = orderRepository.saveAndFlush(order);
+        Long orderId = savedOrder.getId();
+
+        CurrentUser currentUser = new CurrentUser(customer.getId());
+
+        // 1. Thread / İstemci DB'deki halini çeker (version = 0)
+        Order staleOrderInstance = orderRepository.findById(orderId).orElseThrow();
+
+        // Arka planda başka bir isteğin/worker'ın adresi güncellediği simüle edilir.
+        // Bu işlem veritabanındaki version sütununu 1 yapar.
+        AddressRequest concurrentRequest = new AddressRequest(
+                "Eşzamanlı Güncelleme", "Ankara", "Çankaya", "06530", "TR", "Kızılay Cad.", "No:12"
+        );
+        orderService.updateShippingAddress(orderId, concurrentRequest, currentUser);
+
+        // 2. Thread / İstemci elindeki eski (stale) entity'yi güncellemeye çalışır
+        staleOrderInstance.updateShippingAddress(new Address(
+                "Çakışan İstek", "Antalya", "Muratpaşa", "07000", "TR", "Lara Cad.", "No:9"
+        ));
+
+        // WHEN & THEN: DB'deki version (1), eldeki staleOrderInstance version (0) ile çakıştığı için save anında Hata alınmalıdır
+        assertThrows(
+                ObjectOptimisticLockingFailureException.class,
+                () -> orderRepository.save(staleOrderInstance),
+                "Sipariş versiyonu değiştiği için ObjectOptimisticLockingFailureException fırlatılmalıdır."
+        );
     }
 }
