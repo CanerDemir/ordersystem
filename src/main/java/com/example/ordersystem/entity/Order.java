@@ -2,6 +2,7 @@ package com.example.ordersystem.entity;
 
 import com.example.ordersystem.enums.OrderStatus;
 import com.example.ordersystem.exception.OrderCannotBeCancelledException;
+import com.example.ordersystem.exception.OrderCannotBePaidException;
 import com.example.ordersystem.exception.OrderCannotBeUpdatedException;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -119,10 +120,21 @@ public class Order {
         return this.status == OrderStatus.PENDING;
     }
 
+    public void isPayable() {
+        if (!isUpdatable()) {
+            throw new OrderCannotBePaidException(this.id, this.status);
+        }
+    }
+
     public void updateShippingAddress(Address address) {
         if (!isUpdatable()) {
             throw new OrderCannotBeUpdatedException(this.id, this.status);
         }
         this.shippingAddress = address;
+    }
+
+    public void markAsPaid() {
+        this.isPayable();
+        this.status = OrderStatus.PAID;
     }
 }
