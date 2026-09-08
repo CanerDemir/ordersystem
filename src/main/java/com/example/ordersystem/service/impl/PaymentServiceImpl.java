@@ -8,6 +8,7 @@ import com.example.ordersystem.dto.response.PaymentResponse;
 import com.example.ordersystem.entity.Order;
 import com.example.ordersystem.entity.Payment;
 import com.example.ordersystem.enums.PaymentStatus;
+import com.example.ordersystem.exception.GatewayContractViolationException;
 import com.example.ordersystem.exception.PaymentFailedException;
 import com.example.ordersystem.exception.ResourceNotFoundException;
 import com.example.ordersystem.gateway.PaymentGateway;
@@ -20,6 +21,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Optional;
+
+import static org.hibernate.internal.util.StringHelper.isBlank;
 
 @Service
 @RequiredArgsConstructor
@@ -52,17 +55,32 @@ public class PaymentServiceImpl implements PaymentService {
                 request.paymentMethod(),
                 request.idempotencyKey()
         );
-        PaymentResultDto resultDto = paymentGateway.processPayment(executionDto);
+        PaymentResultDto result = paymentGateway.processPayment(executionDto);
 
-        if (!resultDto.successful()) {
+        if (result.successful() && (result.transactionReference() == null || result.transactionReference().isBlank())) {
+            String errorMsg = "Payment provider returned successful=true but transactionReference was null or blank";
+
             paymentAuditService.recordFailedPayment(
-                    orderId,
+                    order.getId(),
                     currentUser.customerId(),
                     order.getTotalAmount(),
                     request.paymentMethod(),
                     request.idempotencyKey()
             );
-            throw new PaymentFailedException(resultDto.errorMessage());
+
+            throw new GatewayContractViolationException(errorMsg);
+        }
+
+        if (!result.successful()) {
+            paymentAuditService.recordFailedPayment(
+                    order.getId(),
+                    currentUser.customerId(),
+                    order.getTotalAmount(),
+                    request.paymentMethod(),
+                    request.idempotencyKey()
+            );
+
+            throw new PaymentFailedException(result.errorMessage());
         }
 
         order.markAsPaid();
@@ -74,7 +92,7 @@ public class PaymentServiceImpl implements PaymentService {
                 request.paymentMethod(),
                 PaymentStatus.SUCCESS,
                 request.idempotencyKey(),
-                resultDto.transactionReference()
+                result.transactionReference()
         );
         Payment savedPayment = paymentRepository.save(successPayment);
         return paymentMapper.toPaymentResponse(savedPayment);
