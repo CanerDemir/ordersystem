@@ -8,13 +8,10 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
-import static org.springframework.security.authorization.AuthorityAuthorizationManager.hasRole;
-
 @Entity
 @Table(name = "customers")
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Getter
-@Setter
 public class Customer {
     @Id
     @SequenceGenerator(
@@ -41,7 +38,7 @@ public class Customer {
     private String password;
 
     @OneToMany(mappedBy = "customer", cascade = CascadeType.ALL, orphanRemoval = true,  fetch = FetchType.LAZY)
-    private Set<CustomerRole> customerRoles = new HashSet<>();
+    private final Set<CustomerRole> customerRoles = new HashSet<>();
 
     public Customer(String firstName, String lastName, String email,  String phone,  String password) {
         this.firstName = firstName;

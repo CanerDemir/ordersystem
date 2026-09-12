@@ -4,7 +4,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
-public record CustomerCreateRequest(
+public record RegisterRequest(
         @NotBlank(message = "First name cannot be blank.")
         @Size(min = 2, max = 100, message = "First name must be between 2 and 100 characters.")
         String firstName,
@@ -14,7 +14,7 @@ public record CustomerCreateRequest(
         String lastName,
 
         @NotBlank(message = "Email cannot be blank.")
-        @Size(min = 2, max = 255, message = "Email be between 2 and 255 characters.")
+        @Size(min = 2, max = 255, message = "Email must be between 2 and 255 characters.")
         @Email(message = "Email format is invalid.")
         String email,
 
