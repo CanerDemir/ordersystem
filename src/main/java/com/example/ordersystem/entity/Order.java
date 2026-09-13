@@ -137,4 +137,8 @@ public class Order {
         this.isPayable();
         this.status = OrderStatus.PAID;
     }
+
+    public boolean isPaid() {
+        return this.status == OrderStatus.PAID;
+    }
 }
