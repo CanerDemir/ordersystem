@@ -40,7 +40,7 @@ public class AuthServiceImpl implements AuthService {
         }
 
         Role defaultRole = roleRepository.findByName(UserRole.Constants.CUSTOMER)
-                .orElseThrow(() -> new ResourceNotFoundException("Role", UserRole.Constants.CUSTOMER));
+                .orElseThrow(() -> new IllegalStateException("Default role 'ROLE_CUSTOMER' not found in the database."));
 
         String encodedPassword = passwordEncoder.encode(request.password());
 
