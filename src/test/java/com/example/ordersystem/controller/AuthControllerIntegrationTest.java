@@ -1,4 +1,4 @@
-package com.example.ordersystem;
+package com.example.ordersystem.controller;
 
 import com.example.ordersystem.entity.Customer;
 import com.example.ordersystem.repository.CustomerRepository;

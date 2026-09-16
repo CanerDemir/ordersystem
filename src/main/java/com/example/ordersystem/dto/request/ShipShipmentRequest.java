@@ -2,7 +2,7 @@ package com.example.ordersystem.dto.request;
 
 import jakarta.validation.constraints.NotBlank;
 
-public record ShipmentRequest(
+public record ShipShipmentRequest(
         @NotBlank(message = "Tracking Number cannot be blank")
         String trackingNumber,
 

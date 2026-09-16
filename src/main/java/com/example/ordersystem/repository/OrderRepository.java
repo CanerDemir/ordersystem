@@ -36,4 +36,6 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             countQuery = "SELECT COUNT(o.id) FROM Order o WHERE o.customer.id = :customerId"
     )
     Page<OrderSummaryResponse> findOrderSummariesByCustomerId(@Param("customerId") Long customerId, Pageable pageable);
+
+    boolean existsByIdAndCustomerId(Long orderId, Long customerId);
 }

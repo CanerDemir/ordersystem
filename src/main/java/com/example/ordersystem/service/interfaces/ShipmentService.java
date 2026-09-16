@@ -1,7 +1,6 @@
 package com.example.ordersystem.service.interfaces;
 
 import com.example.ordersystem.auth.CurrentUser;
-import com.example.ordersystem.dto.request.ShipmentRequest;
 import com.example.ordersystem.dto.response.ShipmentResponse;
 
 public interface ShipmentService {

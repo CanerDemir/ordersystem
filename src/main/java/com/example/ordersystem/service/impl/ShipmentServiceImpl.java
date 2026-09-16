@@ -37,7 +37,7 @@ public class ShipmentServiceImpl implements ShipmentService {
             throw new ShipmentAlreadyExistsException(orderId);
         }
 
-        Shipment shipment = Shipment.createReady(order);
+        Shipment shipment = shipmentRepository.save(Shipment.createReady(order));
         return shipmentMapper.toShipmentResponse(shipment);
     }
 

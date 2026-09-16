@@ -6,6 +6,7 @@ import java.time.Instant;
 
 public record ShipmentResponse(
         Long id,
+        Long orderId,
         String trackingNumber,
         String carrier,
         ShipmentStatus status,

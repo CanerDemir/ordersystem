@@ -10,6 +10,7 @@ public class ShipmentMapper {
     public ShipmentResponse toShipmentResponse(Shipment shipment) {
         return new ShipmentResponse(
                 shipment.getId(),
+                shipment.getOrder().getId(),
                 shipment.getTrackingNumber(),
                 shipment.getCarrier(),
                 shipment.getStatus(),
