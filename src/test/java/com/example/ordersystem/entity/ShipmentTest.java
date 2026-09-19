@@ -1,7 +1,5 @@
-package com.example.ordersystem;
+package com.example.ordersystem.entity;
 
-import com.example.ordersystem.entity.Order;
-import com.example.ordersystem.entity.Shipment;
 import com.example.ordersystem.enums.ShipmentStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
