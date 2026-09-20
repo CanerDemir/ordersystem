@@ -51,12 +51,17 @@ public class OutboxEvent {
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
+    @Column
     private Instant publishedAt;
 
     @Column(nullable = false)
     private Integer retryCount;
 
+    @Column
     private String lastError;
+
+    @Column
+    private Instant lockedUntil;
 
     private OutboxEvent(UUID eventId, EventType eventType, AggregateType aggregateType, Long aggregateId, String payload) {
         validateAggregateId(aggregateId);
@@ -72,6 +77,7 @@ public class OutboxEvent {
         this.publishedAt = null;
         this.retryCount = 0;
         this.lastError = null;
+        this.lockedUntil = null;
     }
 
     public static OutboxEvent create(
@@ -92,20 +98,48 @@ public class OutboxEvent {
         return new OutboxEvent(eventId, eventType, aggregateType, aggregateId, payload);
     }
 
-    public void markAsPublished() {
+    public void claim(Instant now, long leaseDurationSeconds) {
+        validateDate(now);
+
+        if (leaseDurationSeconds <= 0) {
+            throw new IllegalArgumentException("leaseDurationSeconds must be greater than zero");
+        }
+
         if (this.status == OutboxEventStatus.PUBLISHED) {
-            throw new IllegalStateException("OutboxEvent is already in PUBLISHED status. EventId: " + this.eventId);
+            throw new IllegalStateException("Cannot claim an event that is already PUBLISHED. EventId: " + this.eventId);
+        }
+
+        if (this.status == OutboxEventStatus.PROCESSING && !isLeaseExpired(now)) {
+            throw new IllegalStateException("Cannot claim an event currently being processed under an active lease. EventId: " + this.eventId);
+        }
+
+        this.status = OutboxEventStatus.PROCESSING;
+        this.lockedUntil = now.plusSeconds(leaseDurationSeconds);
+    }
+
+    public void markAsPublished(Instant now) {
+        validateDate(now);
+        if (this.status != OutboxEventStatus.PROCESSING) {
+            throw new IllegalStateException("Only PROCESSING events can be marked as PUBLISHED. Current status: " + this.status + ", EventId: " + this.eventId);
         }
         this.status = OutboxEventStatus.PUBLISHED;
-        this.publishedAt = Instant.now();
+        this.publishedAt = now;
+        this.lockedUntil = null;
+        this.lastError = null;
     }
 
     public void recordFailedAttempt(String errorMessage) {
-        if (this.status == OutboxEventStatus.PUBLISHED) {
-            throw new IllegalStateException("Cannot record failed attempt on a PUBLISHED OutboxEvent. EventId: " + this.eventId);
+        if (this.status != OutboxEventStatus.PROCESSING) {
+            throw new IllegalStateException("Only PROCESSING events can record a failed attempt. EventId: " + this.eventId);
         }
+        this.status = OutboxEventStatus.PENDING;
         this.retryCount++;
         this.lastError = errorMessage;
+        this.lockedUntil = null;
+    }
+
+    public boolean isLeaseExpired(Instant now) {
+        return this.lockedUntil != null && !now.isBefore(this.lockedUntil);
     }
 
     private static void validateAggregateId(Long aggregateId) {
@@ -117,6 +151,12 @@ public class OutboxEvent {
     private static void validatePayload(String payload) {
         if (payload == null || payload.isBlank()) {
             throw new IllegalArgumentException("Payload cannot be null, empty, or blank.");
+        }
+    }
+
+    private static void validateDate(Instant now) {
+        if (now == null) {
+            throw new IllegalArgumentException("Date cannot be null.");
         }
     }
 }

@@ -12,6 +12,7 @@ CREATE TABLE outbox_events (
                                published_at TIMESTAMP WITH TIME ZONE,
                                retry_count INT NOT NULL DEFAULT 0,
                                last_error TEXT,
+                               locked_until TIMESTAMP WITH TIME ZONE,
                                CONSTRAINT pk_outbox_events PRIMARY KEY (id),
                                CONSTRAINT uk_outbox_events_event_id UNIQUE (event_id)
 );

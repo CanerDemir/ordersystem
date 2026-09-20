@@ -6,6 +6,8 @@ import com.example.ordersystem.enums.OutboxEventStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -48,7 +50,7 @@ class OutboxEventTest {
         );
 
         // When
-        event.markAsPublished();
+        event.markAsPublished(Instant.now());
 
         // Then
         assertThat(event.getStatus()).isEqualTo(OutboxEventStatus.PUBLISHED);
@@ -65,10 +67,10 @@ class OutboxEventTest {
                 100L,
                 "{}"
         );
-        event.markAsPublished();
+        event.markAsPublished(Instant.now());
 
         // When & Then
-        assertThatThrownBy(event::markAsPublished)
+        assertThatThrownBy(() -> event.markAsPublished(Instant.now()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("already in PUBLISHED status");
     }
@@ -109,7 +111,7 @@ class OutboxEventTest {
                 100L,
                 "{}"
         );
-        event.markAsPublished();
+        event.markAsPublished(Instant.now());
 
         // When & Then
         assertThatThrownBy(() -> event.recordFailedAttempt("Connection reset"))
@@ -188,7 +190,7 @@ class OutboxEventTest {
         assertThat(event.getPublishedAt()).isNull();
 
         // Transition to PUBLISHED
-        event.markAsPublished();
+        event.markAsPublished(Instant.now());
 
         // PUBLISHED Status Invariant Check
         assertThat(event.getStatus()).isEqualTo(OutboxEventStatus.PUBLISHED);
@@ -220,7 +222,7 @@ class OutboxEventTest {
         assertThat(event.getStatus()).isEqualTo(OutboxEventStatus.PENDING);
 
         // Event successfully published afterwards
-        event.markAsPublished();
+        event.markAsPublished(Instant.now());
 
         // Final State Invariants Verification
         assertThat(event.getStatus()).isEqualTo(OutboxEventStatus.PUBLISHED);
