@@ -1,6 +1,7 @@
 package com.example.ordersystem.service.impl;
 
 import com.example.ordersystem.auth.CurrentUser;
+import com.example.ordersystem.dto.PaymentExecutionDto;
 import com.example.ordersystem.dto.PaymentResultDto;
 import com.example.ordersystem.dto.request.PaymentRequest;
 import com.example.ordersystem.dto.response.PaymentResponse;
@@ -10,6 +11,8 @@ import com.example.ordersystem.entity.Payment;
 import com.example.ordersystem.enums.OrderStatus;
 import com.example.ordersystem.enums.PaymentMethod;
 import com.example.ordersystem.enums.PaymentStatus;
+import com.example.ordersystem.event.OutboxService;
+import com.example.ordersystem.event.PaymentSucceededEvent;
 import com.example.ordersystem.exception.GatewayContractViolationException;
 import com.example.ordersystem.exception.OrderCannotBePaidException;
 import com.example.ordersystem.exception.PaymentFailedException;
@@ -33,6 +36,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -48,6 +52,9 @@ public class PaymentServiceImplTest {
 
     @Mock
     private PaymentAuditService paymentAuditService;
+
+    @Mock
+    private OutboxService outboxService;
 
     @InjectMocks
     private PaymentServiceImpl paymentServiceImpl;
@@ -387,4 +394,114 @@ public class PaymentServiceImplTest {
         // 3. Veritabanına yeni bir ödeme kaydı atılmamalıdır.
         verify(paymentRepository, never()).save(any());
     }
+
+    @Test
+    @DisplayName("processOrderPayment Unit Test 9 - Payment status SUCCESS, Order status PAID, OutboxEvent recorded")
+    void shouldProcessPaymentSuccessfullyAndRecordOutboxEvent() {
+        // GIVEN
+        Long orderId = pendingOrder.getId();
+        String idempotencyKey = paymentRequest.idempotencyKey();
+        String transactionRef = "TX_REF_99999";
+        Payment payment = new Payment(orderId, currentUser.customerId(), new BigDecimal("150.00"), PaymentMethod.CREDIT_CARD, PaymentStatus.SUCCESS, idempotencyKey, transactionRef);
+
+        // 1 & 3. Idempotency checks (Fast-path ve Double-check) henüz ödeme olmadığını belirtir
+        when(paymentRepository.findByOrderIdAndCustomerIdAndIdempotencyKey(orderId, currentUser.customerId(), idempotencyKey))
+                .thenReturn(Optional.empty());
+
+        // 2. Lock & IDOR Protection: Sipariş bulunur
+        when(orderRepository.findByIdAndCustomerIdWithLock(orderId, currentUser.customerId()))
+                .thenReturn(Optional.of(pendingOrder));
+
+        // 4. External Gateway başarılı yanıt döner
+        when(paymentGateway.processPayment(any()))
+                .thenReturn(new PaymentResultDto(true, transactionRef, null));
+
+        // Payment kaydetme simülasyonu
+        when(paymentRepository.save(any(Payment.class))).thenReturn(payment);
+
+        // WHEN
+        PaymentResponse response = paymentServiceImpl.processOrderPayment(orderId, paymentRequest, currentUser);
+
+        // THEN
+        // 1. Response doğrulamaları
+        assertThat(response).isNotNull();
+        assertThat(response.orderId()).isEqualTo(orderId);
+        assertThat(response.amount()).isEqualByComparingTo(new BigDecimal("250.00"));
+        assertThat(response.status()).isEqualTo(PaymentStatus.SUCCESS);
+        assertThat(response.transactionReference()).isEqualTo(transactionRef);
+
+        // 2. State Mutation Doğrulaması: Order status PAID olmalı
+        assertThat(pendingOrder.getStatus()).isEqualTo(OrderStatus.PAID);
+
+        // 3. Saved Payment Entity Doğrulamaları
+        ArgumentCaptor<Payment> paymentCaptor = ArgumentCaptor.forClass(Payment.class);
+        verify(paymentRepository).save(paymentCaptor.capture());
+        Payment savedPayment = paymentCaptor.getValue();
+
+        assertThat(savedPayment.getOrderId()).isEqualTo(orderId);
+        assertThat(savedPayment.getAmount()).isEqualByComparingTo(new BigDecimal("250.00"));
+        assertThat(savedPayment.getPaymentStatus()).isEqualTo(PaymentStatus.SUCCESS);
+        assertThat(savedPayment.getIdempotencyKey()).isEqualTo(idempotencyKey);
+        assertThat(savedPayment.getTransactionReference()).isEqualTo(transactionRef);
+
+        // 4. Failed Audit Service çağrılmamalı
+        verifyNoInteractions(paymentAuditService);
+
+        // 5. PaymentSucceededEvent Doğrulamaları
+        ArgumentCaptor<PaymentSucceededEvent> eventCaptor = ArgumentCaptor.forClass(PaymentSucceededEvent.class);
+        verify(outboxService).recordPaymentSucceeded(eventCaptor.capture());
+
+        PaymentSucceededEvent capturedEvent = eventCaptor.getValue();
+        assertThat(capturedEvent.eventId()).isNotNull();
+        assertThat(capturedEvent.paymentId()).isEqualTo(savedPayment.getId());
+        assertThat(capturedEvent.orderId()).isEqualTo(orderId);
+        assertThat(capturedEvent.customerId()).isEqualTo(customer.getId());
+        assertThat(capturedEvent.amount()).isEqualByComparingTo(savedPayment.getAmount());
+        assertThat(capturedEvent.paidAt()).isNotNull();
+    }
+
+    @Test
+    @DisplayName("processOrderPayment Unit Test 10 - Gateway Failure - Payment FAILED, Order remains PENDING, OutboxEvent NOT recorded")
+    void shouldNotRecordOutboxEventWhenGatewayFails() {
+        // GIVEN
+        Long orderId = pendingOrder.getId();
+        String idempotencyKey = paymentRequest.idempotencyKey();
+        String errorMessage = "Insufficient funds";
+
+        // 1 & 3. Idempotency checks boş döner
+        when(paymentRepository.findByOrderIdAndCustomerIdAndIdempotencyKey(orderId, currentUser.customerId(), idempotencyKey))
+                .thenReturn(Optional.empty());
+
+        // 2. Lock & IDOR Protection: Sipariş getirilir
+        when(orderRepository.findByIdAndCustomerIdWithLock(orderId, currentUser.customerId()))
+                .thenReturn(Optional.of(pendingOrder));
+
+        // 4. Gateway FAILED döner
+        when(paymentGateway.processPayment(any()))
+                .thenReturn(new PaymentResultDto(false, null, errorMessage));
+
+        // WHEN & THEN
+        assertThatThrownBy(() -> paymentServiceImpl.processOrderPayment(orderId, paymentRequest, currentUser))
+                .isInstanceOf(PaymentFailedException.class)
+                .hasMessageContaining(errorMessage);
+
+        // 1. Audit Service'in REQUIRES_NEW metodu doğru parametrelerle tetiklendi mi?
+        verify(paymentAuditService, times(1)).recordFailedPayment(
+                eq(orderId),
+                eq(customer.getId()),
+                eq(new BigDecimal("250.00")),
+                eq(PaymentMethod.CREDIT_CARD),
+                eq(idempotencyKey)
+        );
+
+        // 2. State Mutation Doğrulaması: Order durumu PENDING olarak KALMALI (markAsPaid çağrılmadı)
+        assertThat(pendingOrder.getStatus()).isEqualTo(OrderStatus.PENDING);
+
+        // 3. Ana flow'daki SUCCESS Payment save metodu ÇAĞRILMAMALI
+        verify(paymentRepository, never()).save(any());
+
+        // 4. Ana flow'daki OutboxEvent Service recordPaymentSucceeded ÇAĞRILMAMALI
+        verify(outboxService, never()).recordPaymentSucceeded(any());
+    }
+
 }

@@ -8,6 +8,8 @@ import com.example.ordersystem.dto.response.PaymentResponse;
 import com.example.ordersystem.entity.Order;
 import com.example.ordersystem.entity.Payment;
 import com.example.ordersystem.enums.PaymentStatus;
+import com.example.ordersystem.event.OutboxService;
+import com.example.ordersystem.event.PaymentSucceededEvent;
 import com.example.ordersystem.exception.GatewayContractViolationException;
 import com.example.ordersystem.exception.PaymentFailedException;
 import com.example.ordersystem.exception.ResourceNotFoundException;
@@ -20,7 +22,9 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.hibernate.internal.util.StringHelper.isBlank;
 
@@ -32,6 +36,7 @@ public class PaymentServiceImpl implements PaymentService {
     private final PaymentGateway paymentGateway;
     private final PaymentMapper paymentMapper;
     private final PaymentAuditService paymentAuditService;
+    private final OutboxService outboxService;
 
     @Transactional
     public PaymentResponse processOrderPayment(Long orderId, PaymentRequest request, CurrentUser currentUser) {
@@ -95,6 +100,17 @@ public class PaymentServiceImpl implements PaymentService {
                 result.transactionReference()
         );
         Payment savedPayment = paymentRepository.save(successPayment);
+
+        PaymentSucceededEvent event = new PaymentSucceededEvent(
+                UUID.randomUUID(),
+                savedPayment.getId(),
+                order.getId(),
+                currentUser.customerId(),
+                savedPayment.getAmount(),
+                Instant.now()
+        );
+        outboxService.recordPaymentSucceeded(event);
+
         return paymentMapper.toPaymentResponse(savedPayment);
     }
 

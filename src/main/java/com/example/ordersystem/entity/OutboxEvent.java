@@ -58,11 +58,11 @@ public class OutboxEvent {
 
     private String lastError;
 
-    private OutboxEvent(EventType eventType, AggregateType aggregateType, Long aggregateId, String payload) {
+    private OutboxEvent(UUID eventId, EventType eventType, AggregateType aggregateType, Long aggregateId, String payload) {
         validateAggregateId(aggregateId);
         validatePayload(payload);
 
-        this.eventId = UUID.randomUUID();
+        this.eventId = eventId;
         this.eventType = Objects.requireNonNull(eventType, "EventType cannot be null");
         this.aggregateType = Objects.requireNonNull(aggregateType, "AggregateType cannot be null");
         this.aggregateId = aggregateId;
@@ -79,7 +79,17 @@ public class OutboxEvent {
             AggregateType aggregateType,
             Long aggregateId,
             String payload) {
-        return new OutboxEvent(eventType, aggregateType, aggregateId, payload);
+        return new OutboxEvent(UUID.randomUUID(), eventType, aggregateType, aggregateId, payload);
+    }
+
+    public static OutboxEvent createWithEventId(
+            UUID eventId,
+            EventType eventType,
+            AggregateType aggregateType,
+            Long aggregateId,
+            String payload) {
+        Objects.requireNonNull(eventId, "eventId cannot be null");
+        return new OutboxEvent(eventId, eventType, aggregateType, aggregateId, payload);
     }
 
     public void markAsPublished() {
