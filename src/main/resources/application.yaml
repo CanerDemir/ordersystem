@@ -10,3 +10,20 @@ spring:
     password: postgres
     username: postgres
     url: jdbc:postgresql://localhost:5432/ordersystem_db
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # Durability & Ordering Garantileri:
+      acks: all
+      retries: 3
+      properties:
+        enable.idempotence: true
+outbox:
+  publisher:
+    batch-size: 100
+    lease-duration-seconds: 60
+    fixed-delay-ms: 1000
+    topic: order-events
+    publish-timeout-seconds: 5
