@@ -20,6 +20,12 @@ spring:
       retries: 3
       properties:
         enable.idempotence: true
+    consumer:
+      group-id: ${kafka.consumer.group-id}
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
 outbox:
   publisher:
     batch-size: 100
@@ -27,3 +33,8 @@ outbox:
     fixed-delay-ms: 1000
     topic: order-events
     publish-timeout-seconds: 5
+
+kafka:
+  consumer:
+    topic: order-events
+    group-id: order-system-shipment-consumer

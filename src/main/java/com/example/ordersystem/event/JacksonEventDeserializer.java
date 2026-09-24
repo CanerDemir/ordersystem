@@ -1,5 +1,6 @@
 package com.example.ordersystem.event;
 
+import com.example.ordersystem.exception.EventDeserializationException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,7 +27,7 @@ public class JacksonEventDeserializer implements EventDeserializer {
         } catch (Exception e) {
             log.error("Failed to deserialize payload to class {}. Payload snippet: {}",
                     clazz.getSimpleName(), payload.length() > 100 ? payload.substring(0, 100) + "..." : payload, e);
-            throw new RuntimeException("Failed to deserialize event payload to " + clazz.getName(), e);
+            throw new EventDeserializationException("Failed to deserialize event payload to " + clazz.getName(), e);
         }
     }
 }
