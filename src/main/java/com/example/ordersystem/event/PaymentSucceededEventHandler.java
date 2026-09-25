@@ -42,10 +42,6 @@ public class PaymentSucceededEventHandler {
 
         Order order = orderRepository.findById(event.orderId()).orElseThrow(() -> new ResourceNotFoundException("Order", event.orderId()));
 
-        if (shipmentRepository.existsByOrderId(event.orderId())) {
-            throw new IllegalStateException("Shipment already exists for orderId: " + event.orderId());
-        }
-
         // 4. Create READY Shipment
         Shipment shipment = Shipment.createReady(order);
         shipmentRepository.save(shipment);

@@ -28,6 +28,7 @@ import java.util.Collections;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -68,7 +69,6 @@ class ShipmentControllerIntegrationTest {
     private Order orderCustomerB;
     private Order orderCustomerAWithoutShipment;
     private Shipment shipmentCustomerA;
-    private Order unpaidOrderCustomerA;
 
     @BeforeEach
     void setUp() {
@@ -138,19 +138,6 @@ class ShipmentControllerIntegrationTest {
         // 4. Create Shipments (READY)
         shipmentCustomerA = shipmentRepository.save(Shipment.createReady(orderCustomerA));
         shipmentRepository.save(Shipment.createReady(orderCustomerB));
-
-        unpaidOrderCustomerA = orderRepository.save(
-                new Order(
-                        OrderStatus.PENDING,
-                        customerA,
-                        customerA.getPhone(),
-                        customerA.getFirstName(),
-                        customerA.getLastName(),
-                        customerA.getEmail(),
-                        new BigDecimal("99.99"),
-                        Instant.now()
-                )
-        );
     }
 
     // =========================================================================
@@ -213,167 +200,6 @@ class ShipmentControllerIntegrationTest {
     }
 
     // =========================================================================
-    // 2. POST /api/v1/shipments
-    // =========================================================================
-    @Nested
-    @DisplayName("POST /api/v1/shipments Tests")
-    class CreateShipmentTests {
-
-        @Test
-        @DisplayName("1. CUSTOMER - Kendi PAID order'ı için kargo başarıyla oluşturmalı (201 Created + DB Verification)")
-        void shouldCreateShipmentSuccessfullyForOwnPaidOrder() throws Exception {
-            String requestBody = """
-                    {
-                        "orderId": %d
-                    }
-                    """.formatted(orderCustomerAWithoutShipment.getId());
-
-            mockMvc.perform(post("/api/v1/shipments")
-                            .header(HttpHeaders.AUTHORIZATION, tokenCustomerA)
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(requestBody))
-                    .andExpect(status().isCreated())
-                    .andExpect(header().string(HttpHeaders.LOCATION,
-                            "http://localhost/api/v1/orders/" + orderCustomerAWithoutShipment.getId() + "/shipment"))
-                    .andExpect(jsonPath("$.id").exists())
-                    .andExpect(jsonPath("$.orderId", is(orderCustomerAWithoutShipment.getId().intValue())))
-                    .andExpect(jsonPath("$.status", is("READY")));
-
-            // DB Verification: JPA/PostgreSQL seviyesinde entity state doğrulama
-            Shipment savedShipment = shipmentRepository.findByOrderId(orderCustomerAWithoutShipment.getId())
-                    .orElseThrow(() -> new AssertionError("Shipment DB'ye kaydedilmemiş!"));
-
-            assertThat(savedShipment.getStatus()).isEqualTo(ShipmentStatus.READY);
-            assertThat(savedShipment.getOrder().getId()).isEqualTo(orderCustomerAWithoutShipment.getId());
-        }
-
-        @Test
-        @DisplayName("2. CUSTOMER - Başka bir customer'ın orderId'si ile istek atıldığında sipariş bulunamamalı (404 Not Found)")
-        void shouldReturn404WhenCustomerTriesToCreateShipmentForAnotherCustomersOrder() throws Exception {
-            // Customer A -> Customer B'ye ait orderId ile kargo oluşturmaya çalışıyor
-            String requestBody = """
-                    {
-                        "orderId": %d
-                    }
-                    """.formatted(orderCustomerB.getId());
-
-            mockMvc.perform(post("/api/v1/shipments")
-                            .header(HttpHeaders.AUTHORIZATION, tokenCustomerA)
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(requestBody))
-                    .andExpect(status().isNotFound());
-        }
-
-        @Test
-        @DisplayName("3. CUSTOMER - Ödenmemiş (PENDING) order için kargo oluşturulmaya çalışıldığında 400 Bad Request dönmeli")
-        void shouldReturn400WhenOrderIsNotPaid() throws Exception {
-            String requestBody = """
-                    {
-                        "orderId": %d
-                    }
-                    """.formatted(unpaidOrderCustomerA.getId());
-
-            mockMvc.perform(post("/api/v1/shipments")
-                            .header(HttpHeaders.AUTHORIZATION, tokenCustomerA)
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(requestBody))
-                    .andExpect(status().isBadRequest());
-        }
-
-        @Test
-        @DisplayName("4. CUSTOMER - Zaten kargosu var olan bir order için kargo oluşturulmaya çalışıldığında 409 Conflict dönmeli")
-        void shouldReturn409WhenShipmentAlreadyExistsForOrder() throws Exception {
-            // orderCustomerA için setUp aşamasında kargo zaten oluşturulmuştu
-            String requestBody = """
-                    {
-                        "orderId": %d
-                    }
-                    """.formatted(orderCustomerA.getId());
-
-            mockMvc.perform(post("/api/v1/shipments")
-                            .header(HttpHeaders.AUTHORIZATION, tokenCustomerA)
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(requestBody))
-                    .andExpect(status().isConflict());
-        }
-
-        @Test
-        @DisplayName("5. OPERATION - Shipment oluşturma yetkisine sahip olmamalı (403 Forbidden)")
-        void shouldReturn403WhenOperationUserTriesToCreateShipment() throws Exception {
-            String requestBody = """
-                    {
-                        "orderId": %d
-                    }
-                    """.formatted(orderCustomerAWithoutShipment.getId());
-
-            mockMvc.perform(post("/api/v1/shipments")
-                            .header(HttpHeaders.AUTHORIZATION, tokenOperation)
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(requestBody))
-                    .andExpect(status().isForbidden());
-        }
-
-        @Test
-        @DisplayName("6. ADMIN - Shipment oluşturma yetkisine sahip olmamalı (403 Forbidden)")
-        void shouldReturn403WhenAdminUserTriesToCreateShipment() throws Exception {
-            String requestBody = """
-                    {
-                        "orderId": %d
-                    }
-                    """.formatted(orderCustomerAWithoutShipment.getId());
-
-            mockMvc.perform(post("/api/v1/shipments")
-                            .header(HttpHeaders.AUTHORIZATION, tokenAdmin)
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(requestBody))
-                    .andExpect(status().isForbidden());
-        }
-
-        @Test
-        @DisplayName("7. Anonymous - Token olmadan istek atıldığında kimlik doğrulama başarısız olmalı (401 Unauthorized)")
-        void shouldReturn401WhenAnonymousUserTriesToCreateShipment() throws Exception {
-            String requestBody = """
-                    {
-                        "orderId": %d
-                    }
-                    """.formatted(orderCustomerAWithoutShipment.getId());
-
-            mockMvc.perform(post("/api/v1/shipments")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(requestBody))
-                    .andExpect(status().isUnauthorized());
-        }
-
-        @Test
-        @DisplayName("8. Validation - orderId null gönderildiğinde 400 Bad Request dönmeli")
-        void shouldReturn400WhenOrderIdIsNull() throws Exception {
-            String requestBody = """
-                    {
-                        "orderId": null
-                    }
-                    """;
-
-            mockMvc.perform(post("/api/v1/shipments")
-                            .header(HttpHeaders.AUTHORIZATION, tokenCustomerA)
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(requestBody))
-                    .andExpect(status().isBadRequest());
-        }
-
-        @Test
-        @DisplayName("9. Validation - Boş JSON body gönderildiğinde 400 Bad Request dönmeli")
-        void shouldReturn400WhenRequestBodyIsEmptyJson() throws Exception {
-            String requestBody = "{}";
-
-            mockMvc.perform(post("/api/v1/shipments")
-                            .header(HttpHeaders.AUTHORIZATION, tokenCustomerA)
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(requestBody))
-                    .andExpect(status().isBadRequest());
-        }
-    }
-
-    // =========================================================================
     // 3. PATCH /api/v1/shipments/{shipmentId}/ship
     // =========================================================================
     @Nested
@@ -381,7 +207,7 @@ class ShipmentControllerIntegrationTest {
     class ShipShipmentTests {
 
         @Test
-        @DisplayName("1. OPERATION - READY durumundaki shipment'ı başarıyla SHIPPED yapmalı (204 No Content + DB Persistence Check)")
+        @DisplayName("1. OPERATION - READY durumundaki shipment'ı başarıyla SHIPPED yapmalı (200 OK + DB Persistence Check)")
         void shouldShipShipmentSuccessfullyWhenOperationUser() throws Exception {
             String requestBody = """
                     {
@@ -394,7 +220,13 @@ class ShipmentControllerIntegrationTest {
                             .header(HttpHeaders.AUTHORIZATION, tokenOperation)
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(requestBody))
-                    .andExpect(status().isNoContent());
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id", is(shipmentCustomerA.getId().intValue())))
+                    .andExpect(jsonPath("$.orderId", is(orderCustomerA.getId().intValue())))
+                    .andExpect(jsonPath("$.trackingNumber", is("TR123456789")))
+                    .andExpect(jsonPath("$.carrier", is("Yurtici")))
+                    .andExpect(jsonPath("$.status", is("SHIPPED")))
+                    .andExpect(jsonPath("$.shippedAt", notNullValue()));
 
             // L1 cache'i temizleyip güncel state'i DB'den sorguluyoruz
             entityManager.flush();
@@ -460,8 +292,8 @@ class ShipmentControllerIntegrationTest {
         }
 
         @Test
-        @DisplayName("5. Invalid State - Zaten SHIPPED olan shipment tekrar ship edilmeye çalışıldığında 400/409 dönmeli")
-        void shouldReturnBadRequestOrConflictWhenShipmentIsAlreadyShipped() throws Exception {
+        @DisplayName("5. Invalid State - Zaten SHIPPED olan shipment tekrar ship edilmeye çalışıldığında 400 dönmeli")
+        void shouldReturn400WhenShipmentIsAlreadyShipped() throws Exception {
             // Önce kargoyu SHIPPED durumuna çekiyoruz
             shipmentCustomerA.markAsShipped("TR123456789", "Yurtici");
             shipmentRepository.save(shipmentCustomerA);
@@ -551,8 +383,7 @@ class ShipmentControllerIntegrationTest {
 
             // When
             mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/transit", shipmentCustomerA.getId())
-                            .header(HttpHeaders.AUTHORIZATION, tokenOperation)
-                            .contentType(MediaType.APPLICATION_JSON))
+                            .header(HttpHeaders.AUTHORIZATION, tokenOperation))
                     .andExpect(status().isNoContent());
 
             // Then: DB Persistence Verification
@@ -570,8 +401,7 @@ class ShipmentControllerIntegrationTest {
         void shouldReturn400WhenMovingToTransitFromReadyState() throws Exception {
             // shipmentCustomerA varsayılan olarak READY durumunda
             mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/transit", shipmentCustomerA.getId())
-                            .header(HttpHeaders.AUTHORIZATION, tokenOperation)
-                            .contentType(MediaType.APPLICATION_JSON))
+                            .header(HttpHeaders.AUTHORIZATION, tokenOperation))
                     .andExpect(status().isBadRequest());
         }
 
@@ -579,8 +409,7 @@ class ShipmentControllerIntegrationTest {
         @DisplayName("3. CUSTOMER - In-Transit durumuna geçirme yetkisine sahip olmamalı (403 Forbidden)")
         void shouldReturn403WhenCustomerTriesToMoveToTransit() throws Exception {
             mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/transit", shipmentCustomerA.getId())
-                            .header(HttpHeaders.AUTHORIZATION, tokenCustomerA)
-                            .contentType(MediaType.APPLICATION_JSON))
+                            .header(HttpHeaders.AUTHORIZATION, tokenCustomerA))
                     .andExpect(status().isForbidden());
         }
 
@@ -588,17 +417,25 @@ class ShipmentControllerIntegrationTest {
         @DisplayName("4. ADMIN - In-Transit durumuna geçirme yetkisine sahip olmamalı (403 Forbidden)")
         void shouldReturn403WhenAdminTriesToMoveToTransit() throws Exception {
             mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/transit", shipmentCustomerA.getId())
-                            .header(HttpHeaders.AUTHORIZATION, tokenAdmin)
-                            .contentType(MediaType.APPLICATION_JSON))
+                            .header(HttpHeaders.AUTHORIZATION, tokenAdmin))
                     .andExpect(status().isForbidden());
         }
 
         @Test
         @DisplayName("5. Anonymous - Token olmadan istek atıldığında 401 Unauthorized dönmeli")
         void shouldReturn401WhenAnonymousUserTriesToMoveToTransit() throws Exception {
-            mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/transit", shipmentCustomerA.getId())
-                            .contentType(MediaType.APPLICATION_JSON))
+            mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/transit", shipmentCustomerA.getId()))
                     .andExpect(status().isUnauthorized());
+        }
+
+        @Test
+        @DisplayName("6. Resource Not Found - Var olmayan shipmentId ile transit isteği atıldığında 404 Not Found dönmeli")
+        void shouldReturn404WhenShipmentDoesNotExist() throws Exception {
+            Long nonExistentShipmentId = 999999L;
+
+            mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/transit", nonExistentShipmentId)
+                            .header(HttpHeaders.AUTHORIZATION, tokenOperation))
+                    .andExpect(status().isNotFound());
         }
     }
 
@@ -621,8 +458,7 @@ class ShipmentControllerIntegrationTest {
 
             // When
             mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/deliver", shipmentCustomerA.getId())
-                            .header(HttpHeaders.AUTHORIZATION, tokenOperation)
-                            .contentType(MediaType.APPLICATION_JSON))
+                            .header(HttpHeaders.AUTHORIZATION, tokenOperation))
                     .andExpect(status().isNoContent());
 
             // Then: DB Persistence Verification
@@ -642,8 +478,7 @@ class ShipmentControllerIntegrationTest {
         void shouldReturn400WhenDeliveringDirectlyFromReadyState() throws Exception {
             // shipmentCustomerA varsayılan olarak READY durumunda
             mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/deliver", shipmentCustomerA.getId())
-                            .header(HttpHeaders.AUTHORIZATION, tokenOperation)
-                            .contentType(MediaType.APPLICATION_JSON))
+                            .header(HttpHeaders.AUTHORIZATION, tokenOperation))
                     .andExpect(status().isBadRequest());
         }
 
@@ -651,8 +486,7 @@ class ShipmentControllerIntegrationTest {
         @DisplayName("3. CUSTOMER - Teslim etme yetkisine sahip olmamalı (403 Forbidden)")
         void shouldReturn403WhenCustomerTriesToDeliverShipment() throws Exception {
             mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/deliver", shipmentCustomerA.getId())
-                            .header(HttpHeaders.AUTHORIZATION, tokenCustomerA)
-                            .contentType(MediaType.APPLICATION_JSON))
+                            .header(HttpHeaders.AUTHORIZATION, tokenCustomerA))
                     .andExpect(status().isForbidden());
         }
 
@@ -660,17 +494,25 @@ class ShipmentControllerIntegrationTest {
         @DisplayName("4. ADMIN - Teslim etme yetkisine sahip olmamalı (403 Forbidden)")
         void shouldReturn403WhenAdminTriesToDeliverShipment() throws Exception {
             mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/deliver", shipmentCustomerA.getId())
-                            .header(HttpHeaders.AUTHORIZATION, tokenAdmin)
-                            .contentType(MediaType.APPLICATION_JSON))
+                            .header(HttpHeaders.AUTHORIZATION, tokenAdmin))
                     .andExpect(status().isForbidden());
         }
 
         @Test
         @DisplayName("5. Anonymous - Token olmadan istek atıldığında 401 Unauthorized dönmeli")
         void shouldReturn401WhenAnonymousUserTriesToDeliverShipment() throws Exception {
-            mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/deliver", shipmentCustomerA.getId())
-                            .contentType(MediaType.APPLICATION_JSON))
+            mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/deliver", shipmentCustomerA.getId()))
                     .andExpect(status().isUnauthorized());
+        }
+
+        @Test
+        @DisplayName("6. Resource Not Found - Var olmayan shipmentId ile deliver isteği atıldığında 404 Not Found dönmeli")
+        void shouldReturn404WhenShipmentDoesNotExist() throws Exception {
+            Long nonExistentShipmentId = 999999L;
+
+            mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/deliver", nonExistentShipmentId)
+                            .header(HttpHeaders.AUTHORIZATION, tokenOperation))
+                    .andExpect(status().isNotFound());
         }
     }
 
@@ -686,8 +528,7 @@ class ShipmentControllerIntegrationTest {
         void shouldCancelShipmentSuccessfullyFromReadyState() throws Exception {
             // shipmentCustomerA varsayılan olarak READY durumunda
             mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/cancel", shipmentCustomerA.getId())
-                            .header(HttpHeaders.AUTHORIZATION, tokenOperation)
-                            .contentType(MediaType.APPLICATION_JSON))
+                            .header(HttpHeaders.AUTHORIZATION, tokenOperation))
                     .andExpect(status().isNoContent());
 
             // DB Persistence Verification
@@ -711,8 +552,7 @@ class ShipmentControllerIntegrationTest {
 
             // When & Then
             mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/cancel", shipmentCustomerA.getId())
-                            .header(HttpHeaders.AUTHORIZATION, tokenOperation)
-                            .contentType(MediaType.APPLICATION_JSON))
+                            .header(HttpHeaders.AUTHORIZATION, tokenOperation))
                     .andExpect(status().isBadRequest());
         }
 
@@ -726,8 +566,7 @@ class ShipmentControllerIntegrationTest {
 
             // When & Then
             mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/cancel", shipmentCustomerA.getId())
-                            .header(HttpHeaders.AUTHORIZATION, tokenOperation)
-                            .contentType(MediaType.APPLICATION_JSON))
+                            .header(HttpHeaders.AUTHORIZATION, tokenOperation))
                     .andExpect(status().isBadRequest());
         }
 
@@ -735,8 +574,7 @@ class ShipmentControllerIntegrationTest {
         @DisplayName("4. CUSTOMER - İptal etme yetkisine sahip olmamalı (403 Forbidden)")
         void shouldReturn403WhenCustomerTriesToCancelShipment() throws Exception {
             mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/cancel", shipmentCustomerA.getId())
-                            .header(HttpHeaders.AUTHORIZATION, tokenCustomerA)
-                            .contentType(MediaType.APPLICATION_JSON))
+                            .header(HttpHeaders.AUTHORIZATION, tokenCustomerA))
                     .andExpect(status().isForbidden());
         }
 
@@ -744,17 +582,25 @@ class ShipmentControllerIntegrationTest {
         @DisplayName("5. ADMIN - İptal etme yetkisine sahip olmamalı (403 Forbidden)")
         void shouldReturn403WhenAdminTriesToCancelShipment() throws Exception {
             mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/cancel", shipmentCustomerA.getId())
-                            .header(HttpHeaders.AUTHORIZATION, tokenAdmin)
-                            .contentType(MediaType.APPLICATION_JSON))
+                            .header(HttpHeaders.AUTHORIZATION, tokenAdmin))
                     .andExpect(status().isForbidden());
         }
 
         @Test
         @DisplayName("6. Anonymous - Token olmadan istek atıldığında 401 Unauthorized dönmeli")
         void shouldReturn401WhenAnonymousUserTriesToCancelShipment() throws Exception {
-            mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/cancel", shipmentCustomerA.getId())
-                            .contentType(MediaType.APPLICATION_JSON))
+            mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/cancel", shipmentCustomerA.getId()))
                     .andExpect(status().isUnauthorized());
+        }
+
+        @Test
+        @DisplayName("7. Resource Not Found - Var olmayan shipmentId ile cancel isteği atıldığında 404 Not Found dönmeli")
+        void shouldReturn404WhenShipmentDoesNotExist() throws Exception {
+            Long nonExistentShipmentId = 999999L;
+
+            mockMvc.perform(patch("/api/v1/shipments/{shipmentId}/cancel", nonExistentShipmentId)
+                            .header(HttpHeaders.AUTHORIZATION, tokenOperation))
+                    .andExpect(status().isNotFound());
         }
     }
 }
