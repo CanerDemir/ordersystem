@@ -14,6 +14,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -23,30 +24,35 @@ public class OrderController {
     private final OrderService orderService;
 
     @PostMapping
+    @PreAuthorize("hasRole('CUSTOMER')")
     public ResponseEntity<OrderResponse> createOrder(@Valid @RequestBody CreateOrderRequest createOrderRequest, @AuthenticatedUser CurrentUser currentUser) {
         OrderResponse response = orderService.createOrder(createOrderRequest, currentUser);
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
     @GetMapping("/{orderId}")
+    @PreAuthorize("hasRole('CUSTOMER')")
     public ResponseEntity<OrderResponse> getOrderById(@PathVariable Long orderId, @AuthenticatedUser CurrentUser currentUser) {
         OrderResponse response = orderService.getOrderById(orderId, currentUser);
         return ResponseEntity.ok(response);
     }
 
     @PostMapping("/{orderId}/cancel")
+    @PreAuthorize("hasRole('CUSTOMER')")
     public ResponseEntity<OrderResponse> cancelOrder(@PathVariable Long orderId, @AuthenticatedUser CurrentUser currentUser) {
         OrderResponse response = orderService.cancelOrder(orderId, currentUser);
         return ResponseEntity.ok(response);
     }
 
     @GetMapping
+    @PreAuthorize("hasRole('CUSTOMER')")
     public ResponseEntity<Page<OrderSummaryResponse>> getMyOrders(@AuthenticatedUser CurrentUser currentUser, @PageableDefault(page = 0, size = 20)Pageable pageable) {
         Page<OrderSummaryResponse> orders = orderService.getCustomerOrders(currentUser, pageable);
         return ResponseEntity.ok(orders);
     }
 
     @PutMapping("/{orderId}/shipping-address")
+    @PreAuthorize("hasRole('CUSTOMER')")
     public ResponseEntity<OrderResponse> updateShippingAddress(@PathVariable Long orderId, @Valid @RequestBody AddressRequest request, @AuthenticatedUser CurrentUser currentUser) {
         OrderResponse response = orderService.updateShippingAddress(orderId, request, currentUser);
         return ResponseEntity.ok(response);

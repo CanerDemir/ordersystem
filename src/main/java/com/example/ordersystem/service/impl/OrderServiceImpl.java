@@ -123,10 +123,7 @@ public class OrderServiceImpl implements OrderService {
     @Transactional
     public OrderResponse cancelOrder(Long orderId, CurrentUser user) {
         Order order = orderRepository.findByIdAndCustomerIdWithLock(orderId, user.customerId()).orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
-
-        if (order.getStatus() != OrderStatus.PENDING) {
-            throw new OrderCannotBeCancelledException(orderId);
-        }
+        order.cancel();
 
         Set<Long> productIds = order.getItems().stream().map(OrderItem::getProductId).collect(Collectors.toSet());
         List<Product> lockedProducts = productRepository.findAllByIdInWithLock(productIds);
@@ -141,9 +138,7 @@ public class OrderServiceImpl implements OrderService {
             product.increaseStock(orderItem.getQuantity());
         }
 
-        order.setStatus(OrderStatus.CANCELLED);
-        Order savedOrder = orderRepository.save(order);
-        return orderMapper.toOrderResponse(savedOrder);
+        return orderMapper.toOrderResponse(order);
     }
 
     @Override

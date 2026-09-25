@@ -138,7 +138,13 @@ public class Order {
         this.status = OrderStatus.PAID;
     }
 
-    public boolean isPaid() {
-        return this.status == OrderStatus.PAID;
+    public Order cancel() {
+        if (this.status != OrderStatus.PENDING) {
+            throw new OrderCannotBeCancelledException(this.id);
+        }
+
+        this.status = OrderStatus.CANCELLED;
+        this.cancelledAt = Instant.now();
+        return this;
     }
 }
