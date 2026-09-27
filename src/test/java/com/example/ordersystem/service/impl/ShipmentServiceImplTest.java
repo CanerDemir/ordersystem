@@ -1,5 +1,6 @@
 package com.example.ordersystem.service.impl;
 
+import com.example.ordersystem.auth.CurrentUser;
 import com.example.ordersystem.dto.response.ShipmentResponse;
 import com.example.ordersystem.entity.Shipment;
 import com.example.ordersystem.exception.ResourceNotFoundException;
@@ -46,26 +47,31 @@ public class ShipmentServiceImplTest {
         @DisplayName("Should return ShipmentResponse when shipment exists")
         void shouldReturnShipmentResponseWhenShipmentExists() {
             Long orderId = 100L;
+            CurrentUser currentUser = new CurrentUser(500L);
 
-            given(shipmentRepository.findByOrderId(orderId)).willReturn(Optional.of(mockShipment));
+            given(shipmentRepository.findByOrderIdAndOrderCustomerId(orderId, currentUser.customerId())).willReturn(Optional.of(mockShipment));
             given(shipmentMapper.toShipmentResponse(mockShipment)).willReturn(mockShipmentResponse);
 
-            ShipmentResponse response = shipmentService.getShipmentByOrderId(orderId);
+            ShipmentResponse response = shipmentService.getShipmentByOrderId(orderId, currentUser);
 
             assertThat(response).isNotNull().isEqualTo(mockShipmentResponse);
 
             verify(shipmentMapper).toShipmentResponse(mockShipment);
+            verify(shipmentRepository).findByOrderIdAndOrderCustomerId(orderId, currentUser.customerId());
         }
 
         @Test
         @DisplayName("Should throw ResourceNotFoundException when shipment does not exist")
         void shouldThrowResourceNotFoundExceptionWhenShipmentNotFound() {
             Long orderId = 100L;
+            CurrentUser currentUser = new CurrentUser(500L);
 
-            given(shipmentRepository.findByOrderId(orderId)).willReturn(Optional.empty());
+            given(shipmentRepository.findByOrderIdAndOrderCustomerId(orderId, currentUser.customerId())).willReturn(Optional.empty());
 
-            assertThatThrownBy(() -> shipmentService.getShipmentByOrderId(orderId))
+            assertThatThrownBy(() -> shipmentService.getShipmentByOrderId(orderId,  currentUser))
                     .isInstanceOf(ResourceNotFoundException.class);
+
+            verify(shipmentRepository).findByOrderIdAndOrderCustomerId(orderId, currentUser.customerId());
         }
     }
 

@@ -1,5 +1,6 @@
 package com.example.ordersystem.service.impl;
 
+import com.example.ordersystem.auth.CurrentUser;
 import com.example.ordersystem.dto.response.ShipmentResponse;
 import com.example.ordersystem.entity.Shipment;
 import com.example.ordersystem.exception.ResourceNotFoundException;
@@ -19,8 +20,8 @@ public class ShipmentServiceImpl implements ShipmentService {
 
     @Override
     @Transactional(readOnly = true)
-    public ShipmentResponse getShipmentByOrderId(Long orderId) {
-        Shipment shipment = shipmentRepository.findByOrderId(orderId).orElseThrow(() -> new ResourceNotFoundException("Shipment",  orderId));
+    public ShipmentResponse getShipmentByOrderId(Long orderId, CurrentUser  currentUser)  {
+        Shipment shipment = shipmentRepository.findByOrderIdAndOrderCustomerId(orderId, currentUser.customerId()).orElseThrow(() -> new ResourceNotFoundException("Shipment",  orderId));
         return shipmentMapper.toShipmentResponse(shipment);
     }
 

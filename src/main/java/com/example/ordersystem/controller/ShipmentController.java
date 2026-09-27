@@ -1,5 +1,7 @@
 package com.example.ordersystem.controller;
 
+import com.example.ordersystem.annotations.AuthenticatedUser;
+import com.example.ordersystem.auth.CurrentUser;
 import com.example.ordersystem.dto.request.ShipShipmentRequest;
 import com.example.ordersystem.dto.response.ShipmentResponse;
 import com.example.ordersystem.service.interfaces.ShipmentService;
@@ -17,9 +19,9 @@ public class ShipmentController {
     private final ShipmentService shipmentService;
 
     @GetMapping("/orders/{orderId}/shipment")
-    @PreAuthorize("hasRole('CUSTOMER') and @orderSecurity.isOrderOwner(#orderId)")
-    public ResponseEntity<ShipmentResponse> getShipmentByOrderId(@PathVariable("orderId") Long orderId)  {
-        ShipmentResponse response = shipmentService.getShipmentByOrderId(orderId);
+    @PreAuthorize("hasRole('CUSTOMER')")
+    public ResponseEntity<ShipmentResponse> getShipmentByOrderId(@PathVariable("orderId") Long orderId, @AuthenticatedUser CurrentUser currentUser)  {
+        ShipmentResponse response = shipmentService.getShipmentByOrderId(orderId, currentUser);
         return ResponseEntity.ok(response);
     }
 
