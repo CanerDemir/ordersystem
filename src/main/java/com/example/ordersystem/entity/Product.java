@@ -5,7 +5,6 @@ import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -46,14 +45,14 @@ public class Product {
     @Column(nullable = false)
     private Instant updatedAt;
 
-    public Product( String name, BigDecimal price, Integer stock, String description, ProductStatus status, Instant createdAt, Instant updatedAt ) {
-        this.name = name;
-        this.price = price;
-        this.stock = stock;
-        this.description =  description;
-        this.status = status;
-        this.createdAt = createdAt;
-        this.updatedAt = updatedAt;
+    @PrePersist
+    public void onCreate() {
+        this.createdAt = Instant.now();
+        this.updatedAt = Instant.now();
+    }
+    @PreUpdate
+    public void onUpdate() {
+        this.updatedAt = Instant.now();
     }
 
     public void decreaseStock(Integer quantity) {
@@ -74,5 +73,27 @@ public class Product {
         }
 
         this.stock += quantity;
+    }
+
+    public void deactivate() {
+        this.status = ProductStatus.PASSIVE;
+    }
+
+    public static Product create(String name, BigDecimal price, Integer stock, String description) {
+        Product product = new Product();
+        product.name = name;
+        product.price = price;
+        product.stock = stock;
+        product.description = description;
+        product.status = ProductStatus.ACTIVE;
+
+        return product;
+    }
+
+    public void update(String name, BigDecimal price, Integer stock, String description) {
+        this.name = name;
+        this.price = price;
+        this.stock = stock;
+        this.description = description;
     }
 }
