@@ -1,5 +1,6 @@
 package com.example.ordersystem.entity;
 
+import com.example.ordersystem.exception.CartItemNotFoundException;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -76,7 +77,7 @@ public class Cart {
         Objects.requireNonNull(product, "Product cannot be null");
 
         CartItem item = findItemByProduct(product)
-                .orElseThrow(() -> new IllegalArgumentException("Product not found in cart: " + product.getId()));
+                .orElseThrow(() -> new CartItemNotFoundException(product.getId()));
 
         item.updateQuantity(newQuantity);
     }
@@ -85,7 +86,7 @@ public class Cart {
         Objects.requireNonNull(product, "Product cannot be null");
 
         CartItem item = findItemByProduct(product)
-                .orElseThrow(() -> new IllegalArgumentException("Product not found in cart: " + product.getId()));
+                .orElseThrow(() -> new CartItemNotFoundException(product.getId()));
 
         this.items.remove(item);
         item.setCart(null);

@@ -96,4 +96,8 @@ public class Product {
         this.stock = stock;
         this.description = description;
     }
+
+    public boolean isActive() {
+        return this.status == ProductStatus.ACTIVE;
+    }
 }
