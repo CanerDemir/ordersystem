@@ -26,8 +26,6 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
-import static org.hibernate.internal.util.StringHelper.isBlank;
-
 @Service
 @RequiredArgsConstructor
 public class PaymentServiceImpl implements PaymentService {
@@ -52,7 +50,7 @@ public class PaymentServiceImpl implements PaymentService {
             return handleExistingPayment(lockedPayment.get());
         }
 
-        order.isPayable();
+        order.validateCanBePaid();
 
         PaymentExecutionDto executionDto = new PaymentExecutionDto(
                 order.getId(),

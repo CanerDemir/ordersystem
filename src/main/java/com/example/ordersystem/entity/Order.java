@@ -4,6 +4,7 @@ import com.example.ordersystem.enums.OrderStatus;
 import com.example.ordersystem.exception.OrderCannotBeCancelledException;
 import com.example.ordersystem.exception.OrderCannotBePaidException;
 import com.example.ordersystem.exception.OrderCannotBeUpdatedException;
+import com.example.ordersystem.exception.OrderStatusTransitionException;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -12,10 +13,7 @@ import lombok.Setter;
 
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 
 @Entity
 @Table(name = "orders")
@@ -36,6 +34,7 @@ public class Order {
     private Instant shippedAt;
     private Instant deliveredAt;
     private Instant cancelledAt;
+    private Instant refundedAt;
 
     @Column(nullable = false)
     @Enumerated(EnumType.STRING)
@@ -126,27 +125,68 @@ public class Order {
         item.setOrder(this);
     }
 
-    public boolean isUpdatable() {
-        return this.status == OrderStatus.PENDING;
-    }
-
-    public void isPayable() {
-        if (!isUpdatable()) {
+    public void validateCanBePaid() {
+        if (this.status != OrderStatus.PENDING) {
             throw new OrderCannotBePaidException(this.id, this.status);
         }
     }
 
     public void updateShippingAddress(Address address) {
-        if (!isUpdatable()) {
+        if (this.status != OrderStatus.PENDING) {
             throw new OrderCannotBeUpdatedException(this.id, this.status);
         }
         this.shippingAddress = address;
     }
 
+    public void assignAddresses(Address shippingAddress, Address billingAddress) {
+        this.shippingAddress = Objects.requireNonNull(shippingAddress, "shippingAddress cannot be null");
+        this.billingAddress = Objects.requireNonNull(billingAddress, "billingAddress cannot be null");
+    }
+
+    // #####################
+    // Life Cycle Methods
+    // #####################
+
     public void markAsPaid() {
-        this.isPayable();
+        this.validateCanBePaid();
         this.status = OrderStatus.PAID;
         this.paidAt = Instant.now();
+    }
+
+    public void startPreparing() {
+        if (this.status != OrderStatus.PAID) {
+            throw new OrderStatusTransitionException(this.id, this.status, OrderStatus.PREPARING);
+        }
+
+        this.status = OrderStatus.PREPARING;
+    }
+
+    public void markAsShipped() {
+        if (this.status != OrderStatus.PREPARING) {
+            throw new OrderStatusTransitionException(this.id, this.status, OrderStatus.SHIPPED);
+        }
+
+        this.status = OrderStatus.SHIPPED;
+        this.shippedAt = Instant.now();
+    }
+
+    public void markAsDelivered() {
+        if (this.status != OrderStatus.SHIPPED) {
+            throw new OrderStatusTransitionException(this.id, this.status, OrderStatus.DELIVERED);
+        }
+
+        this.status = OrderStatus.DELIVERED;
+        this.deliveredAt = Instant.now();
+    }
+
+    public void refund() {
+        switch (this.status) {
+            case PAID, PREPARING, SHIPPED, DELIVERED -> {
+                this.status = OrderStatus.REFUNDED;
+                this.refundedAt = Instant.now();
+            }
+            default -> throw new OrderStatusTransitionException(this.id, this.status, OrderStatus.REFUNDED);
+        }
     }
 
     public Order cancel() {
@@ -157,10 +197,5 @@ public class Order {
         this.status = OrderStatus.CANCELLED;
         this.cancelledAt = Instant.now();
         return this;
-    }
-
-    public void assignAddresses(Address shippingAddress, Address billingAddress) {
-        this.shippingAddress = Objects.requireNonNull(shippingAddress, "shippingAddress cannot be null");
-        this.billingAddress = Objects.requireNonNull(billingAddress, "billingAddress cannot be null");
     }
 }
