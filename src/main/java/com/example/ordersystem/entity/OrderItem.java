@@ -7,12 +7,12 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.math.BigDecimal;
+import java.util.Objects;
 
 @Entity
 @Table(name = "order_items")
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Getter
-@Setter
 public class OrderItem {
 
     @Id
@@ -42,11 +42,29 @@ public class OrderItem {
     @Column(name = "line_total", nullable = false, precision = 19, scale = 2)
     private BigDecimal lineTotal;
 
-    public OrderItem(Long productId, String productName, Integer quantity, BigDecimal unitPrice, BigDecimal lineTotal) {
-        this.productId = productId;
+    public OrderItem(Long productId, String productName, Integer quantity, BigDecimal unitPrice) {
+        if (quantity == null || quantity <= 0) {
+            throw new IllegalArgumentException( "Quantity must be greater than zero. Provided Quantity: " + quantity );
+        }
+        if (productName == null || productName.isBlank()) {
+            throw new IllegalArgumentException( "Product name must be provided. Provided Product: " + productName );
+        }
+        if (unitPrice == null || unitPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Unit price must be greater than zero. Provided Unit: " + unitPrice );
+        }
+
+        this.productId = Objects.requireNonNull(productId, "productId cannot be null");
         this.productName = productName;
         this.quantity = quantity;
         this.unitPrice = unitPrice;
-        this.lineTotal = lineTotal;
+        this.lineTotal = unitPrice.multiply(BigDecimal.valueOf(quantity));
+    }
+
+    void setOrder(Order order) {
+        this.order = order;
+    }
+
+    Order getOrder() {
+        return this.order;
     }
 }

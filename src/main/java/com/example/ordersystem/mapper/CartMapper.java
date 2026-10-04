@@ -7,7 +7,6 @@ import com.example.ordersystem.entity.CartItem;
 import com.example.ordersystem.entity.Product;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
 import java.util.List;
 
 @Component

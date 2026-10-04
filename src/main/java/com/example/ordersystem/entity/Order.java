@@ -15,12 +15,12 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 @Entity
 @Table(name = "orders")
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Getter
-@Setter
 public class Order {
 
     @Id
@@ -91,7 +91,12 @@ public class Order {
     @Version
     private Long version;
 
-    public Order( OrderStatus status, Customer customer, String customerPhone, String customerFirstName, String customerLastName, String customerEmail, BigDecimal totalAmount, Instant createdAt ) {
+    @PrePersist
+    public void onCreate() {
+        this.createdAt = Instant.now();
+    }
+
+    public Order( OrderStatus status, Customer customer, String customerPhone, String customerFirstName, String customerLastName, String customerEmail, BigDecimal totalAmount ) {
         this.status = status;
         this.customer = customer;
         this.customerPhone = customerPhone;
@@ -99,7 +104,6 @@ public class Order {
         this.customerLastName = customerLastName;
         this.customerEmail = customerEmail;
         this.totalAmount = totalAmount;
-        this.createdAt = createdAt;
     }
 
     public List<OrderItem> getItems() {
@@ -109,6 +113,12 @@ public class Order {
     public void addOrderItem(OrderItem item){
         if (item == null) {
             throw new IllegalArgumentException("Cannot add null order item");
+        }
+        if (item.getOrder() != null) {
+            throw new IllegalStateException("OrderItem is already assigned to an order");
+        }
+        if (items.contains(item)) {
+            throw new IllegalStateException("OrderItem instance is already present in this order");
         }
 
         this.items.add(item);
@@ -136,6 +146,7 @@ public class Order {
     public void markAsPaid() {
         this.isPayable();
         this.status = OrderStatus.PAID;
+        this.paidAt = Instant.now();
     }
 
     public Order cancel() {
@@ -146,5 +157,10 @@ public class Order {
         this.status = OrderStatus.CANCELLED;
         this.cancelledAt = Instant.now();
         return this;
+    }
+
+    public void assignAddresses(Address shippingAddress, Address billingAddress) {
+        this.shippingAddress = Objects.requireNonNull(shippingAddress, "shippingAddress cannot be null");
+        this.billingAddress = Objects.requireNonNull(billingAddress, "billingAddress cannot be null");
     }
 }

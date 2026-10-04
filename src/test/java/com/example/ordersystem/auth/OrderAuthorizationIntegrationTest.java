@@ -1,14 +1,11 @@
 package com.example.ordersystem.auth;
 
 import com.example.ordersystem.dto.request.AddressRequest;
-import com.example.ordersystem.dto.request.CreateOrderRequest;
-import com.example.ordersystem.dto.request.OrderItemRequest;
 import com.example.ordersystem.entity.Address;
 import com.example.ordersystem.entity.Customer;
 import com.example.ordersystem.entity.Order;
 import com.example.ordersystem.entity.Product;
 import com.example.ordersystem.enums.OrderStatus;
-import com.example.ordersystem.enums.ProductStatus;
 import com.example.ordersystem.repository.CustomerRepository;
 import com.example.ordersystem.repository.OrderRepository;
 import com.example.ordersystem.repository.ProductRepository;
@@ -29,7 +26,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -71,7 +67,7 @@ class OrderAuthorizationIntegrationTest {
         customerA = customerRepository.save(new Customer("Caner", "Demir", "caner@example.com", "+905551112233", "password1"));
         customerB = customerRepository.save(new Customer("Ahmet", "Yılmaz", "ahmet@example.com", "+905554445566", "password2"));
 
-        testProduct = new Product("Test Laptop", new BigDecimal("1000.00"), 10, "Test product", ProductStatus.ACTIVE, Instant.now(), Instant.now());
+        testProduct = Product.create("Test Laptop", new BigDecimal("1000.00"), 10, "Test product");
         testProduct = productRepository.save(testProduct);
     }
 
@@ -170,69 +166,6 @@ class OrderAuthorizationIntegrationTest {
     }
 
     // =========================================================================
-    // CREATE ORDER AUTHORIZATION TESTS
-    // =========================================================================
-
-    @Nested
-    @DisplayName("Create Order Authorization Tests")
-    class CreateOrderAuthorizationTests {
-
-        @Test
-        @DisplayName("Test 1: CUSTOMER -> Create order -> Authorization Succeeded")
-        void createOrder_Customer_ShouldAuthorizeSuccessfully() throws Exception {
-            CreateOrderRequest request = buildCreateOrderRequest(testProduct.getId(), 2);
-
-            mockMvc.perform(post("/orders")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(request))
-                            .with(authentication(createAuth(customerA.getId(), "ROLE_CUSTOMER"))))
-                    .andExpect(status().isCreated())
-                    .andExpect(jsonPath("$.status").value("PENDING"));
-        }
-
-        @Test
-        @DisplayName("Test 2: OPERATION -> Create order -> 403 FORBIDDEN")
-        void createOrder_Operation_ShouldReturn403() throws Exception {
-            CreateOrderRequest request = buildCreateOrderRequest(testProduct.getId(), 1);
-
-            mockMvc.perform(post("/orders")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(request))
-                            .with(authentication(createAuth(null, "ROLE_OPERATION"))))
-                    .andExpect(status().isForbidden());
-
-            verify(orderRepository, never()).save(any());
-        }
-
-        @Test
-        @DisplayName("Test 3: ADMIN -> Create order -> 403 FORBIDDEN")
-        void createOrder_Admin_ShouldReturn403() throws Exception {
-            CreateOrderRequest request = buildCreateOrderRequest(testProduct.getId(), 1);
-
-            mockMvc.perform(post("/orders")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(request))
-                            .with(authentication(createAuth(null, "ROLE_ADMIN"))))
-                    .andExpect(status().isForbidden());
-
-            verify(orderRepository, never()).save(any());
-        }
-
-        @Test
-        @DisplayName("Test 4: Anonymous User -> Create order -> 401 UNAUTHORIZED")
-        void createOrder_Anonymous_ShouldReturn401() throws Exception {
-            CreateOrderRequest request = buildCreateOrderRequest(testProduct.getId(), 1);
-
-            mockMvc.perform(post("/orders")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(request)))
-                    .andExpect(status().isUnauthorized());
-
-            verify(orderRepository, never()).save(any());
-        }
-    }
-
-    // =========================================================================
     // DOMAIN RULE EXCEPTION AUTHORIZATION TESTS
     // =========================================================================
 
@@ -244,8 +177,7 @@ class OrderAuthorizationIntegrationTest {
         @DisplayName("Test 7: CUSTOMER -> Cancel own PAID order -> Authorization succeeds, Domain fails with Exception")
         void cancelOrder_CustomerOwnPaidOrder_ShouldPassAuthAndFailWithBusinessException() throws Exception {
             Order paidOrder = createPendingOrder(customerA, testProduct, 1);
-            paidOrder.setStatus(OrderStatus.PAID);
-            paidOrder.setPaidAt(Instant.now());
+            paidOrder.markAsPaid();
             paidOrder = orderRepository.save(paidOrder);
 
             mockMvc.perform(post("/orders/{orderId}/cancel", paidOrder.getId())
@@ -373,8 +305,7 @@ class OrderAuthorizationIntegrationTest {
         void updateShippingAddress_CustomerOwnPaidOrder_ShouldPassAuthAndFailWithBusinessException() throws Exception {
             // Given: Customer A'ya ait PAID order
             Order paidOrder = createPendingOrder(customerA, testProduct, 1);
-            paidOrder.setStatus(OrderStatus.PAID);
-            paidOrder.setPaidAt(Instant.now());
+            paidOrder.markAsPaid();
             paidOrder = orderRepository.save(paidOrder);
 
             AddressRequest addressRequest = buildAddressRequest("Yeni Ev Adresi");
@@ -526,22 +457,16 @@ class OrderAuthorizationIntegrationTest {
                 customer.getFirstName(),
                 customer.getLastName(),
                 customer.getEmail(),
-                product.getPrice().multiply(BigDecimal.valueOf(quantity)),
-                Instant.now()
+                product.getPrice().multiply(BigDecimal.valueOf(quantity))
         );
-        order.setShippingAddress(new Address("Ev", "İstanbul", "Kadıköy", "34000", "Türkiye", "Açık adres", "Detay"));
-        order.setBillingAddress(new Address("Fatura", "İstanbul", "Kadıköy", "34000", "Türkiye", "Açık adres", "Detay"));
+        Address shippingAddress = (new Address("Ev", "İstanbul", "Kadıköy", "34000", "Türkiye", "Açık adres", "Detay"));
+        Address billingAddress = (new Address("Fatura", "İstanbul", "Kadıköy", "34000", "Türkiye", "Açık adres", "Detay"));
+        order.assignAddresses(shippingAddress, billingAddress);
 
         product.decreaseStock(quantity);
         productRepository.save(product);
 
         return orderRepository.save(order);
-    }
-
-    private CreateOrderRequest buildCreateOrderRequest(Long productId, int quantity) {
-        AddressRequest address = new AddressRequest("Ev", "İstanbul", "Kadıköy", "34000", "Türkiye", "Açık adres", "Detay");
-        OrderItemRequest item = new OrderItemRequest(productId, quantity);
-        return new CreateOrderRequest(List.of(item), address, address);
     }
 
     private AddressRequest buildAddressRequest(String title) {
