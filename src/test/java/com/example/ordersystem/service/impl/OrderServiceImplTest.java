@@ -14,7 +14,9 @@ import com.example.ordersystem.mapper.OrderMapper;
 import com.example.ordersystem.repository.CustomerRepository;
 import com.example.ordersystem.repository.OrderRepository;
 import com.example.ordersystem.repository.ProductRepository;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -25,6 +27,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.*;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -55,6 +58,23 @@ public class OrderServiceImplTest {
     private ArgumentCaptor<Set<Long>> productIdsCaptor;
 
     Instant createdAt = Instant.parse("2026-08-29T10:00:00Z");
+
+    private Order order;
+    private Customer customer;
+
+    @BeforeEach
+    void setUp() {
+        customer = new Customer("Caner", "Demir", "caner@example.com", "5551234567", "pass123");
+        order = new Order(
+                OrderStatus.PENDING,
+                customer,
+                customer.getPhone(),
+                customer.getFirstName(),
+                customer.getLastName(),
+                customer.getEmail(),
+                BigDecimal.valueOf(350.00)
+        );
+    }
 
     @Test
     @DisplayName("Get Order Unit Test 2: Sipariş bulunamadığında veya başka müşteriye ait olduğunda ResourceNotFoundException fırlatılmalı ve Mapper çalışmamalı")
@@ -108,7 +128,6 @@ public class OrderServiceImplTest {
         Long customerId = 1L;
         CurrentUser currentUser = new CurrentUser(customerId);
 
-        Customer customer = new Customer("Caner", "Demir", "caner@example.com", "5551234567", "pass123");
         when(customer.getId()).thenReturn(customerId);
 
         Product productA = createProduct(10L, "Product A", ProductStatus.ACTIVE, 6, BigDecimal.valueOf(100));
@@ -481,7 +500,7 @@ public class OrderServiceImplTest {
 
         // ISOLATION VERIFICATION:
         // 1. Repository'ye kesinlikle Customer A ID'sinin (1L) iletildiği doğrulanır
-        verify(orderRepository, times(1)).findOrderSummariesByCustomerId(eq(customerAId), any(Pageable.class));
+        verify(orderRepository).findOrderSummariesByCustomerId(eq(customerAId), any(Pageable.class));
 
         // 2. Repository'nin Customer B ID'si (2L) ile HiÇ ÇAĞRILMADIĞI doğrulanır (Sızıntı engeli)
         verify(orderRepository, never()).findOrderSummariesByCustomerId(eq(customerBId), any(Pageable.class));
@@ -771,6 +790,236 @@ public class OrderServiceImplTest {
         assertEquals("İstanbul", order.getBillingAddress().getCity());
         assertEquals("Şişli", order.getBillingAddress().getDistrict());
         assertEquals("Büyükdere Cad. No:100", order.getBillingAddress().getAddressLine());
+    }
+
+    @Nested
+    @DisplayName("startPreparing testleri")
+    class StartPreparingTests {
+        @Test
+        @DisplayName("startPreparing: Sipariş PAID durumundayken başarılı bir şekilde PREPARING durumuna geçmeli ve güncel OrderResponse dönmeli")
+        void startPreparing_whenOrderExistsAndIsPaid_shouldStartPreparingAndReturnResponse() throws Exception {
+            // Arrange
+            Long orderId = 100L;
+            ReflectionTestUtils.setField(order, "status", OrderStatus.PAID);
+
+            Product productA = createProduct(10L, "Product A", ProductStatus.ACTIVE, 6, BigDecimal.valueOf(100));
+
+            OrderItemResponse itemResponseA = new OrderItemResponse(11L, productA.getId(), productA.getName(), 2, new BigDecimal("100.00"), BigDecimal.ZERO, BigDecimal.valueOf(200));
+            AddressResponse addressResponse = new AddressResponse("Ev Adresi", "İstanbul", "Kadıköy", "34710", "Türkiye", "Moda Cad. No:1", "D 2");
+
+            OrderResponse expectedResponse = new OrderResponse(
+                    orderId,
+                    createdAt,
+                    OrderStatus.PREPARING,
+                    customer.getId(),
+                    new BigDecimal("350.00"),
+                    List.of(itemResponseA),
+                    addressResponse,
+                    addressResponse
+            );
+
+            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderMapper.toOrderResponse(order)).thenReturn(expectedResponse);
+
+            // Act
+            OrderResponse result = orderServiceImpl.startPreparing(orderId);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(OrderStatus.PREPARING, result.status());
+            assertEquals(OrderStatus.PREPARING, order.getStatus());
+            verify(orderRepository).findById(orderId);
+            verify(orderMapper).toOrderResponse(order);
+        }
+
+        @Test
+        @DisplayName("startPreparing: Sipariş veritabanında bulunamadığında ResourceNotFoundException fırlatmalı")
+        void startPreparing_whenOrderNotFound_shouldThrowResourceNotFoundException() {
+            // Arrange
+            Long orderId = 999L;
+            when(orderRepository.findById(orderId)).thenReturn(Optional.empty());
+
+            // Act & Assert
+            assertThrows(ResourceNotFoundException.class, () -> orderServiceImpl.startPreparing(orderId));
+            verify(orderRepository).findById(orderId);
+            verifyNoInteractions(orderMapper);
+        }
+
+        @Test
+        @DisplayName("startPreparing: Sipariş geçersiz bir durumda (örn. SHIPPED) olduğunda domain exception'ı yutmadan (swallow etmeden) fırlatmalı")
+        void startPreparing_whenOrderStatusIsInvalid_shouldPropagateOrderStatusTransitionException() throws Exception {
+            // Arrange
+            Long orderId = 100L;
+            ReflectionTestUtils.setField(order, "status", OrderStatus.SHIPPED);
+
+            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+
+            // Act & Assert
+            OrderStatusTransitionException exception = assertThrows(
+                    OrderStatusTransitionException.class,
+                    () -> orderServiceImpl.startPreparing(orderId)
+            );
+
+            assertEquals(OrderStatus.SHIPPED, order.getStatus(), "Domain seviyesinde exception fırlatıldığı için statü SHIPPED olarak kalmalı");
+            assertTrue(exception.getMessage().contains(OrderStatus.SHIPPED.name()));
+            assertTrue(exception.getMessage().contains(OrderStatus.PREPARING.name()));
+
+            verify(orderRepository).findById(orderId);
+            verifyNoInteractions(orderMapper);
+        }
+    }
+
+    @Nested
+    @DisplayName("markAsShipped testleri")
+    class markAsShippedTests {
+        @Test
+        @DisplayName("markAsShipped: Sipariş PREPARING durumundayken başarılı bir şekilde SHIPPED olmalı, shippedAt set edilmeli ve OrderResponse dönmeli")
+        void markAsShipped_whenOrderExistsAndIsPreparing_shouldMarkAsShippedAndReturnResponse() throws Exception {
+            // Arrange
+            Long orderId = 100L;
+            ReflectionTestUtils.setField(order, "status", OrderStatus.PREPARING);
+
+            OrderItemResponse itemResponseA = new OrderItemResponse(11L, 10L, "Test Product", 2, new BigDecimal("100.00"), BigDecimal.ZERO, BigDecimal.valueOf(200));
+            AddressResponse addressResponse = new AddressResponse("Ev Adresi", "İstanbul", "Kadıköy", "34710", "Türkiye", "Moda Cad. No:1", "D 2");
+
+            OrderResponse expectedResponse = new OrderResponse(
+                    orderId,
+                    createdAt,
+                    OrderStatus.SHIPPED,
+                    customer.getId(),
+                    new BigDecimal("350.00"),
+                    List.of(itemResponseA),
+                    addressResponse,
+                    addressResponse
+            );
+
+            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderMapper.toOrderResponse(order)).thenReturn(expectedResponse);
+
+            // Act
+            OrderResponse result = orderServiceImpl.markAsShipped(orderId);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(OrderStatus.SHIPPED, order.getStatus());
+            assertEquals(OrderStatus.SHIPPED, result.status());
+            assertNotNull(order.getShippedAt(), "shippedAt alanı doldurulmuş olmalı");
+            verify(orderRepository).findById(orderId);
+            verify(orderMapper).toOrderResponse(order);
+        }
+
+        @Test
+        @DisplayName("markAsShipped: Sipariş veritabanında bulunamadığında ResourceNotFoundException fırlatmalı")
+        void markAsShipped_whenOrderNotFound_shouldThrowResourceNotFoundException() {
+            // Arrange
+            Long orderId = 999L;
+            when(orderRepository.findById(orderId)).thenReturn(Optional.empty());
+
+            // Act & Assert
+            assertThrows(ResourceNotFoundException.class, () -> orderServiceImpl.markAsShipped(orderId));
+            verify(orderRepository).findById(orderId);
+            verifyNoInteractions(orderMapper);
+        }
+
+        @Test
+        @DisplayName("markAsShipped: PREPARING dışındaki bir durumda (örn. PENDING) OrderStatusTransitionException dışarı fırlatılmalı")
+        void markAsShipped_whenOrderStatusIsInvalid_shouldPropagateOrderStatusTransitionException() throws Exception {
+            // Arrange
+            Long orderId = 100L;
+            ReflectionTestUtils.setField(order, "status", OrderStatus.PENDING);
+
+            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+
+            // Act & Assert
+            OrderStatusTransitionException exception = assertThrows(
+                    OrderStatusTransitionException.class,
+                    () -> orderServiceImpl.markAsShipped(orderId)
+            );
+
+            assertEquals(OrderStatus.PENDING, order.getStatus(), "Domain exception fırlatıldığı için statü korunuş olmalı");
+            assertNull(order.getShippedAt(), "shippedAt set edilmemiş olmalı");
+            assertTrue(exception.getMessage().contains(OrderStatus.PENDING.name()));
+            assertTrue(exception.getMessage().contains(OrderStatus.SHIPPED.name()));
+
+            verify(orderRepository).findById(orderId);
+            verifyNoInteractions(orderMapper);
+        }
+    }
+
+    @Nested
+    @DisplayName("markAsDelivered testleri")
+    class markAsDeliveredTests {
+        @Test
+        @DisplayName("markAsDelivered: Sipariş SHIPPED durumundayken başarılı şekilde DELIVERED olmalı, deliveredAt set edilmeli ve OrderResponse dönmeli")
+        void markAsDelivered_whenOrderExistsAndIsShipped_shouldMarkAsDeliveredAndReturnResponse() throws Exception {
+            // Arrange
+            Long orderId = 100L;
+            ReflectionTestUtils.setField(order, "status", OrderStatus.SHIPPED);
+
+            OrderItemResponse itemResponseA = new OrderItemResponse(11L, 10L, "Test Product", 2, new BigDecimal("100.00"), BigDecimal.ZERO, BigDecimal.valueOf(200));
+            AddressResponse addressResponse = new AddressResponse("Ev Adresi", "İstanbul", "Kadıköy", "34710", "Türkiye", "Moda Cad. No:1", "D 2");
+
+            OrderResponse expectedResponse = new OrderResponse(
+                    orderId,
+                    createdAt,
+                    OrderStatus.DELIVERED,
+                    customer.getId(),
+                    new BigDecimal("350.00"),
+                    List.of(itemResponseA),
+                    addressResponse,
+                    addressResponse
+            );
+            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+            when(orderMapper.toOrderResponse(order)).thenReturn(expectedResponse);
+
+            // Act
+            OrderResponse result = orderServiceImpl.markAsDelivered(orderId);
+
+            // Assert
+            assertNotNull(result);
+            assertEquals(OrderStatus.DELIVERED, order.getStatus());
+            assertEquals(OrderStatus.DELIVERED, result.status());
+            assertNotNull(order.getDeliveredAt(), "deliveredAt alanı doldurulmuş olmalı");
+            verify(orderRepository).findById(orderId);
+            verify(orderMapper).toOrderResponse(order);
+        }
+
+        @Test
+        @DisplayName("markAsDelivered: Sipariş veritabanında bulunamadığında ResourceNotFoundException fırlatmalı")
+        void markAsDelivered_whenOrderNotFound_shouldThrowResourceNotFoundException() {
+            // Arrange
+            Long orderId = 999L;
+            when(orderRepository.findById(orderId)).thenReturn(Optional.empty());
+
+            // Act & Assert
+            assertThrows(ResourceNotFoundException.class, () -> orderServiceImpl.markAsDelivered(orderId));
+            verify(orderRepository).findById(orderId);
+            verifyNoInteractions(orderMapper);
+        }
+
+        @Test
+        @DisplayName("markAsDelivered: SHIPPED dışındaki bir durumda (örn. PREPARING) OrderStatusTransitionException dışarı fırlatılmalı")
+        void markAsDelivered_whenOrderStatusIsInvalid_shouldPropagateOrderStatusTransitionException() throws Exception {
+            // Arrange
+            Long orderId = 100L;
+            ReflectionTestUtils.setField(order, "status", OrderStatus.PREPARING);
+
+            when(orderRepository.findById(orderId)).thenReturn(Optional.of(order));
+
+            // Act & Assert
+            OrderStatusTransitionException exception = assertThrows(
+                    OrderStatusTransitionException.class,
+                    () -> orderServiceImpl.markAsDelivered(orderId)
+            );
+
+            assertEquals(OrderStatus.PREPARING, order.getStatus(), "Domain exception fırlatıldığı için statü korunmalı");
+            assertNull(order.getDeliveredAt(), "deliveredAt set edilmemiş olmalı");
+            assertTrue(exception.getMessage().contains(OrderStatus.PREPARING.name()));
+            assertTrue(exception.getMessage().contains(OrderStatus.DELIVERED.name()));
+
+            verify(orderRepository).findById(orderId);
+            verifyNoInteractions(orderMapper);
+        }
     }
 
     private static AddressRequest createAddressRequest(String title, String city, String district, String zipCode, String country, String addressLine, String addressDetail) {

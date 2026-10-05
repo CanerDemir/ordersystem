@@ -92,4 +92,28 @@ public class OrderServiceImpl implements OrderService {
         order.updateShippingAddress(newShippingAddress);
         return orderMapper.toOrderResponse(order);
     }
+
+    @Override
+    @Transactional
+    public OrderResponse startPreparing(Long orderId) {
+        Order order = orderRepository.findById(orderId).orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
+        order.startPreparing();
+        return orderMapper.toOrderResponse(order);
+    }
+
+    @Override
+    @Transactional
+    public OrderResponse markAsShipped(Long orderId) {
+        Order order = orderRepository.findById(orderId).orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
+        order.markAsShipped();
+        return orderMapper.toOrderResponse(order);
+    }
+
+    @Override
+    @Transactional
+    public OrderResponse markAsDelivered(Long orderId) {
+        Order order = orderRepository.findById(orderId).orElseThrow(() -> new ResourceNotFoundException("Order", orderId));
+        order.markAsDelivered();
+        return orderMapper.toOrderResponse(order);
+    }
 }

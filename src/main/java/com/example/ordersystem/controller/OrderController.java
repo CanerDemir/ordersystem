@@ -48,4 +48,25 @@ public class OrderController {
         OrderResponse response = orderService.updateShippingAddress(orderId, request, currentUser);
         return ResponseEntity.ok(response);
     }
+
+    @PatchMapping("/{orderId}/prepare")
+    @PreAuthorize("hasRole('OPERATION')")
+    public ResponseEntity<OrderResponse> startPreparing(@PathVariable Long orderId) {
+        OrderResponse response = orderService.startPreparing(orderId);
+        return ResponseEntity.ok(response);
+    }
+
+    @PatchMapping("/{orderId}/ship")
+    @PreAuthorize("hasRole('OPERATION')")
+    public ResponseEntity<OrderResponse> markAsShipped(@PathVariable Long orderId) {
+        OrderResponse response = orderService.markAsShipped(orderId);
+        return ResponseEntity.ok(response);
+    }
+
+    @PatchMapping("/{orderId}/deliver")
+    @PreAuthorize("hasRole('OPERATION')")
+    public ResponseEntity<OrderResponse> markAsDelivered(@PathVariable Long orderId) {
+        OrderResponse response = orderService.markAsDelivered(orderId);
+        return ResponseEntity.ok(response);
+    }
 }

@@ -22,6 +22,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -118,7 +119,7 @@ class OrderAuthorizationIntegrationTest {
                     .andExpect(status().isNotFound());
 
             // Order query edildi ama müşteri ID uyuşmadığından bulunamadı
-            verify(orderRepository, times(1)).findByIdAndCustomerIdWithLock(order.getId(), customerA.getId());
+            verify(orderRepository).findByIdAndCustomerIdWithLock(order.getId(), customerA.getId());
 
             Order originalOrder = orderRepository.findById(order.getId()).orElseThrow();
             assertThat(originalOrder.getStatus()).isEqualTo(OrderStatus.PENDING);
@@ -184,7 +185,7 @@ class OrderAuthorizationIntegrationTest {
                             .with(authentication(createAuth(customerA.getId(), "ROLE_CUSTOMER"))))
                     .andExpect(status().isBadRequest());
 
-            verify(orderRepository, times(1)).findByIdAndCustomerIdWithLock(paidOrder.getId(), customerA.getId());
+            verify(orderRepository).findByIdAndCustomerIdWithLock(paidOrder.getId(), customerA.getId());
         }
     }
 
@@ -206,7 +207,7 @@ class OrderAuthorizationIntegrationTest {
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.id").value(order.getId()));
 
-            verify(orderRepository, times(1)).findByIdAndCustomerId(order.getId(), customerA.getId());
+            verify(orderRepository).findByIdAndCustomerId(order.getId(), customerA.getId());
         }
 
         @Test
@@ -221,7 +222,7 @@ class OrderAuthorizationIntegrationTest {
                     .andExpect(status().isNotFound());
 
             // Resource Ownership Check: Sorgu atılır ancak customerId eşleşmediği için 404 dönmelidir
-            verify(orderRepository, times(1)).findByIdAndCustomerId(order.getId(), customerA.getId());
+            verify(orderRepository).findByIdAndCustomerId(order.getId(), customerA.getId());
         }
 
         @Test
@@ -273,16 +274,16 @@ class OrderAuthorizationIntegrationTest {
         @DisplayName("CUSTOMER A -> Update own PENDING order address -> 200 OK")
         void updateShippingAddress_CustomerOwnPendingOrder_ShouldSucceed() throws Exception {
             Order order = createPendingOrder(customerA, testProduct, 1);
-            AddressRequest addressRequest = buildAddressRequest("Yeni Ev Adresi");
+            AddressRequest addressRequest = buildAddressRequest("Ev Adresi");
 
             mockMvc.perform(put("/orders/{orderId}/shipping-address", order.getId())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(addressRequest))
                             .with(authentication(createAuth(customerA.getId(), "ROLE_CUSTOMER"))))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.shippingAddress.title").value("Yeni Ev Adresi"));
+                    .andExpect(jsonPath("$.shippingAddress.title").value("Ev Adresi"));
 
-            verify(orderRepository, times(1)).findByIdAndCustomerId(order.getId(), customerA.getId());
+            verify(orderRepository).findByIdAndCustomerId(order.getId(), customerA.getId());
         }
 
         @Test
@@ -297,7 +298,7 @@ class OrderAuthorizationIntegrationTest {
                             .with(authentication(createAuth(customerA.getId(), "ROLE_CUSTOMER"))))
                     .andExpect(status().isNotFound());
 
-            verify(orderRepository, times(1)).findByIdAndCustomerId(order.getId(), customerA.getId());
+            verify(orderRepository).findByIdAndCustomerId(order.getId(), customerA.getId());
         }
 
         @Test
@@ -317,7 +318,7 @@ class OrderAuthorizationIntegrationTest {
                             .with(authentication(createAuth(customerA.getId(), "ROLE_CUSTOMER"))))
                     .andExpect(status().isBadRequest()); // ExceptionHandler'ına göre (ör. 400 Bad Request)
 
-            verify(orderRepository, times(1)).findByIdAndCustomerId(paidOrder.getId(), customerA.getId());
+            verify(orderRepository).findByIdAndCustomerId(paidOrder.getId(), customerA.getId());
         }
 
         @Test
@@ -382,7 +383,7 @@ class OrderAuthorizationIntegrationTest {
                             .with(authentication(createAuth(customerA.getId(), "ROLE_CUSTOMER"))))
                     .andExpect(status().isOk());
 
-            verify(orderRepository, times(1)).findOrderSummariesByCustomerId(eq(customerA.getId()), any());
+            verify(orderRepository).findOrderSummariesByCustomerId(eq(customerA.getId()), any());
         }
 
         @Test
@@ -441,7 +442,244 @@ class OrderAuthorizationIntegrationTest {
                     )));
 
             // DB sorgusunun doğru customerId parametresiyle tetiklendiği doğrulanır
-            verify(orderRepository, times(1)).findOrderSummariesByCustomerId(eq(customerA.getId()), any());
+            verify(orderRepository).findOrderSummariesByCustomerId(eq(customerA.getId()), any());
+        }
+    }
+
+    // =========================================================================
+    // STARTPREPARING AUTHORIZATION TESTS
+    // =========================================================================
+
+    @Nested
+    @DisplayName("Start Preparing Authorization Tests")
+    class StartPreparingAuthorizationTests {
+
+        @Test
+        @DisplayName("startPreparing: OPERATION rolündeki kullanıcı siparişi hazırlık aşamasına alabilir -> 200 OK")
+        void startPreparing_whenUserIsOperation_shouldReturn200Ok() throws Exception {
+            // Arrange
+            Order paidOrder = createPendingOrder(customerA, testProduct, 1);
+            paidOrder.markAsPaid();
+            paidOrder = orderRepository.save(paidOrder);
+
+            // Act & Assert
+            mockMvc.perform(patch("/api/v1/orders/{orderId}/prepare", paidOrder.getId())
+                            .with(authentication(createAuth(customerA.getId(), "ROLE_OPERATION"))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").value(paidOrder.getId()))
+                    .andExpect(jsonPath("$.status").value("PREPARING"));
+        }
+
+        @Test
+        @DisplayName("startPreparing: CUSTOMER rolündeki kullanıcı işlemi çağıramaz -> 403 Forbidden")
+        void startPreparing_whenUserIsCustomer_shouldReturn403Forbidden() throws Exception {
+            // Arrange
+            Long orderId = 100L;
+
+            // Act & Assert
+            mockMvc.perform(patch("/api/v1/orders/{orderId}/prepare", orderId)
+                            .with(authentication(createAuth(customerA.getId(), "ROLE_CUSTOMER"))))
+                    .andExpect(status().isForbidden());
+
+            verifyNoInteractions(orderRepository);
+        }
+
+        @Test
+        @DisplayName("startPreparing: Yetkisiz/Anonim kullanıcı işlemi çağıramaz -> 401 Unauthorized")
+        void startPreparing_whenUserIsAnonymous_shouldReturn401Unauthorized() throws Exception {
+            // Arrange
+            Long orderId = 100L;
+
+            // Act & Assert
+            mockMvc.perform(patch("/api/v1/orders/{orderId}/prepare", orderId))
+                    .andExpect(status().isUnauthorized());
+
+            verifyNoInteractions(orderRepository);
+        }
+
+        @Test
+        @DisplayName("startPreparing: Sipariş bulunamadığında Service ResourceNotFoundException fırlatır -> 404 Not Found")
+        void startPreparing_whenOrderNotFound_shouldReturn404NotFound() throws Exception {
+            // Arrange
+            Long orderId = 999L;
+
+            // Act & Assert
+            mockMvc.perform(patch("/api/v1/orders/{orderId}/prepare", orderId)
+                            .with(authentication(createAuth(customerA.getId(), "ROLE_OPERATION"))))
+                    .andExpect(status().isNotFound());
+        }
+
+        @Test
+        @DisplayName("startPreparing: Geçersiz durumlarda Service OrderStatusTransitionException fırlatır -> 409 CONFLICT")
+        void startPreparing_whenStatusTransitionIsInvalid_shouldReturn400BadRequest() throws Exception {
+            // Arrange
+            Order shippedOrder = createPendingOrder(customerA, testProduct, 1);
+            ReflectionTestUtils.setField(shippedOrder, "status", OrderStatus.SHIPPED);
+            shippedOrder = orderRepository.save(shippedOrder);
+
+            // Act & Assert
+            mockMvc.perform(patch("/api/v1/orders/{orderId}/prepare", shippedOrder.getId())
+                            .with(authentication(createAuth(customerA.getId(), "ROLE_OPERATION"))))
+                    .andExpect(status().isConflict());
+        }
+    }
+
+    // =========================================================================
+    // MARKASSHIPPED AUTHORIZATION TESTS
+    // =========================================================================
+
+    @Nested
+    @DisplayName("Mark As Shipped Authorization Tests")
+    class MarkAsShippedTests {
+
+        @Test
+        @DisplayName("markAsShipped: OPERATION rolündeki kullanıcı siparişi kargoya verebilir -> 200 OK")
+        void markAsShipped_whenUserIsOperation_shouldReturn200Ok() throws Exception {
+            // Arrange
+            Order order = createPendingOrder(customerA, testProduct, 1);
+            order.markAsPaid();
+            order.startPreparing();
+            order = orderRepository.save(order);
+
+            // Act & Assert
+            mockMvc.perform(patch("/api/v1/orders/{orderId}/ship", order.getId())
+                            .with(authentication(createAuth(customerA.getId(), "ROLE_OPERATION"))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").value(order.getId()))
+                    .andExpect(jsonPath("$.status").value("SHIPPED"));
+        }
+
+        @Test
+        @DisplayName("markAsShipped: CUSTOMER rolündeki kullanıcı kargolama işlemini çağıramaz -> 403 Forbidden")
+        void markAsShipped_whenUserIsCustomer_shouldReturn403Forbidden() throws Exception {
+            // Arrange
+            Long orderId = 100L;
+
+            // Act & Assert
+            mockMvc.perform(patch("/api/v1/orders/{orderId}/ship", orderId)
+                            .with(authentication(createAuth(customerA.getId(), "ROLE_CUSTOMER"))))
+                    .andExpect(status().isForbidden());
+
+            verifyNoInteractions(orderRepository);
+        }
+
+        @Test
+        @DisplayName("markAsShipped: Yetkisiz/Anonim kullanıcı işlemi çağıramaz -> 401 Unauthorized")
+        void markAsShipped_whenUserIsAnonymous_shouldReturn401Unauthorized() throws Exception {
+            // Arrange
+            Long orderId = 100L;
+
+            // Act & Assert
+            mockMvc.perform(patch("/api/v1/orders/{orderId}/ship", orderId))
+                    .andExpect(status().isUnauthorized());
+
+            verifyNoInteractions(orderRepository);
+        }
+
+        @Test
+        @DisplayName("markAsShipped: Geçersiz transition denemesinde (örn. Order PENDING ise) -> 409 CONFLICT döner")
+        void markAsShipped_whenStatusTransitionIsInvalid_shouldReturn409Conflict() throws Exception {
+            // Arrange
+            Order order = createPendingOrder(customerA, testProduct, 1);
+            ReflectionTestUtils.setField(order, "status", OrderStatus.PENDING);
+            order = orderRepository.save(order);
+
+            // Act & Assert
+            mockMvc.perform(patch("/api/v1/orders/{orderId}/ship", order.getId())
+                            .with(authentication(createAuth(customerA.getId(), "ROLE_OPERATION"))))
+                    .andExpect(status().isConflict());
+        }
+
+        @Test
+        @DisplayName("markAsShipped: Sipariş bulunamadığında -> 404 Not Found döner")
+        void markAsShipped_whenOrderNotFound_shouldReturn404NotFound() throws Exception {
+            // Arrange
+            Long orderId = 999L;
+
+            // Act & Assert
+            mockMvc.perform(patch("/api/v1/orders/{orderId}/ship", orderId)
+                            .with(authentication(createAuth(customerA.getId(), "ROLE_OPERATION"))))
+                    .andExpect(status().isNotFound());
+        }
+    }
+
+    // =========================================================================
+    // MARKASDELIVERED AUTHORIZATION TESTS
+    // =========================================================================
+
+    @Nested
+    @DisplayName("Mark As Delivered Authorization Tests")
+    class MarkAsDeliveredTests {
+
+        @Test
+        @DisplayName("markAsDelivered: OPERATION rolündeki kullanıcı siparişi teslim edildi olarak işaretleyebilir -> 200 OK")
+        void markAsDelivered_whenUserIsOperation_shouldReturn200Ok() throws Exception {
+            // Arrange
+            Order order = createPendingOrder(customerA, testProduct, 1);
+            order.markAsPaid();
+            order.startPreparing();
+            order.markAsShipped();
+            order = orderRepository.save(order);
+
+            // Act & Assert
+            mockMvc.perform(patch("/api/v1/orders/{orderId}/deliver", order.getId())
+                            .with(authentication(createAuth(customerA.getId(), "ROLE_OPERATION"))))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.id").value(order.getId()))
+                    .andExpect(jsonPath("$.status").value("DELIVERED"));
+        }
+
+        @Test
+        @DisplayName("markAsDelivered: CUSTOMER rolündeki kullanıcı teslimat işlemini çağıramaz -> 403 Forbidden")
+        void markAsDelivered_whenUserIsCustomer_shouldReturn403Forbidden() throws Exception {
+            // Arrange
+            Long orderId = 100L;
+
+            // Act & Assert
+            mockMvc.perform(patch("/api/v1/orders/{orderId}/deliver", orderId)
+                            .with(authentication(createAuth(customerA.getId(), "ROLE_CUSTOMER"))))
+                    .andExpect(status().isForbidden());
+
+            verifyNoInteractions(orderRepository);
+        }
+
+        @Test
+        @DisplayName("markAsDelivered: Yetkisiz/Anonim kullanıcı işlemi çağıramaz -> 401 Unauthorized")
+        void markAsDelivered_whenUserIsAnonymous_shouldReturn401Unauthorized() throws Exception {
+            // Arrange
+            Long orderId = 100L;
+
+            // Act & Assert
+            mockMvc.perform(patch("/api/v1/orders/{orderId}/deliver", orderId))
+                    .andExpect(status().isUnauthorized());
+
+            verifyNoInteractions(orderRepository);
+        }
+
+        @Test
+        @DisplayName("markAsDelivered: Geçersiz transition denemesinde (örn. Order PREPARING ise) -> 409 CONFLICT döner")
+        void markAsDelivered_whenStatusTransitionIsInvalid_shouldReturn409Conflict() throws Exception {
+            // Arrange
+            Order order = createPendingOrder(customerA, testProduct, 1);
+            ReflectionTestUtils.setField(order, "status", OrderStatus.PREPARING);
+            order = orderRepository.save(order);
+
+            // Act & Assert
+            mockMvc.perform(patch("/api/v1/orders/{orderId}/deliver", order.getId())
+                            .with(authentication(createAuth(customerA.getId(), "ROLE_OPERATION"))))
+                    .andExpect(status().isConflict());
+        }
+
+        @Test
+        @DisplayName("markAsDelivered: Sipariş bulunamadığında -> 404 Not Found döner")
+        void markAsDelivered_whenOrderNotFound_shouldReturn404NotFound() throws Exception {
+            // Arrange
+            Long orderId = 999L;
+
+            // Act & Assert
+            mockMvc.perform(patch("/api/v1/orders/{orderId}/deliver", orderId)
+                            .with(authentication(createAuth(customerA.getId(), "ROLE_OPERATION"))))
+                    .andExpect(status().isNotFound());
         }
     }
 

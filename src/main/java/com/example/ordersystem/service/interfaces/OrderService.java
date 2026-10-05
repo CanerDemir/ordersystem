@@ -12,4 +12,7 @@ public interface OrderService {
     OrderResponse cancelOrder(Long orderId, CurrentUser user);
     Page<OrderSummaryResponse> getCustomerOrders(CurrentUser user, Pageable pageable);
     OrderResponse updateShippingAddress(Long orderId, AddressRequest request, CurrentUser user);
+    OrderResponse startPreparing(Long orderId);
+    OrderResponse markAsShipped(Long orderId);
+    OrderResponse markAsDelivered(Long orderId);
 }
