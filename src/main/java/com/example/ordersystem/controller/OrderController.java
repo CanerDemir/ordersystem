@@ -3,9 +3,12 @@ package com.example.ordersystem.controller;
 import com.example.ordersystem.annotations.AuthenticatedUser;
 import com.example.ordersystem.auth.CurrentUser;
 import com.example.ordersystem.dto.request.AddressRequest;
+import com.example.ordersystem.dto.request.RefundRequest;
 import com.example.ordersystem.dto.response.OrderResponse;
 import com.example.ordersystem.dto.response.OrderSummaryResponse;
+import com.example.ordersystem.dto.response.RefundResponse;
 import com.example.ordersystem.service.interfaces.OrderService;
+import com.example.ordersystem.service.interfaces.PaymentRefundService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -20,6 +23,7 @@ import org.springframework.web.bind.annotation.*;
 @RequiredArgsConstructor
 public class OrderController {
     private final OrderService orderService;
+    private final PaymentRefundService paymentRefundService;
 
     @GetMapping("/{orderId}")
     @PreAuthorize("hasRole('CUSTOMER')")
@@ -67,6 +71,13 @@ public class OrderController {
     @PreAuthorize("hasRole('OPERATION')")
     public ResponseEntity<OrderResponse> markAsDelivered(@PathVariable Long orderId) {
         OrderResponse response = orderService.markAsDelivered(orderId);
+        return ResponseEntity.ok(response);
+    }
+
+    @PostMapping("/{orderId}/refund")
+    @PreAuthorize("hasRole('CUSTOMER')")
+    public ResponseEntity<RefundResponse> refundOrder(@PathVariable Long orderId, @AuthenticatedUser CurrentUser currentUser, @Valid @RequestBody RefundRequest request) {
+        RefundResponse response = paymentRefundService.processRefund(orderId, currentUser.customerId(), request);
         return ResponseEntity.ok(response);
     }
 }

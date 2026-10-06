@@ -143,6 +143,10 @@ public class Order {
         this.billingAddress = Objects.requireNonNull(billingAddress, "billingAddress cannot be null");
     }
 
+    public boolean canBeRefunded() {
+        return this.status == OrderStatus.PAID || this.status == OrderStatus.PREPARING || this.status == OrderStatus.SHIPPED || this.status == OrderStatus.DELIVERED;
+    }
+
     // #####################
     // Life Cycle Methods
     // #####################

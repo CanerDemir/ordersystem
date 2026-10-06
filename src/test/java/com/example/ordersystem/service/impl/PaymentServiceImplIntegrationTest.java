@@ -112,7 +112,7 @@ public class PaymentServiceImplIntegrationTest {
             assertThat(responseB.status()).isEqualTo(PaymentStatus.SUCCESS);
 
             // 2. CRITICAL PROOF: Gateway yalnızca 1 kez çağrıldı
-            assertThat(fakePaymentGateway.getCallCount()).isEqualTo(1);
+            assertThat(fakePaymentGateway.getPaymentCallCount()).isEqualTo(1);
 
             // 3. CRITICAL PROOF: Veritabanında tam olarak 1 adet SUCCESS Payment kaydı olmalıdır
             Optional<Payment> savedPaymentOpt = paymentRepository.findByOrderIdAndCustomerIdAndIdempotencyKey(
