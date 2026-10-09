@@ -61,7 +61,7 @@ public class PaymentServiceImplIntegrationTest {
         customer = new Customer("Caner", "Demir", "c@c.com", "01234567890", "password");
 
         // Testing DB Context: PENDING durumunda bir sipariş oluşturulur
-        Order order = new Order(OrderStatus.PENDING, customer, customer.getPhone(), customer.getFirstName(), customer.getLastName(), customer.getEmail(), new BigDecimal("250.00"), Instant.now());
+        Order order = new Order(OrderStatus.PENDING, customer, customer.getPhone(), customer.getFirstName(), customer.getLastName(), customer.getEmail(), new BigDecimal("250.00"));
         order = orderRepository.save(order);
 
         this.orderId = order.getId();

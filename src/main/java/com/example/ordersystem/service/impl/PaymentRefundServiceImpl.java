@@ -52,12 +52,12 @@ public class PaymentRefundServiceImpl implements PaymentRefundService {
             return  refundMapper.toRefundResponse(lockedRefund.get());
         }
 
-        if (!order.canBeRefunded()) {
-            throw new OrderStatusTransitionException(orderId, order.getStatus(), OrderStatus.REFUNDED);
-        }
-
         if (paymentRefundRepository.existsByOrderIdAndStatus(orderId, RefundStatus.SUCCESS)) {
             throw new PaymentRefundException(orderId);
+        }
+
+        if (!order.canBeRefunded()) {
+            throw new OrderStatusTransitionException(orderId, order.getStatus(), OrderStatus.REFUNDED);
         }
 
         Payment payment = paymentRepository.findByOrderIdAndStatus(orderId, PaymentStatus.SUCCESS).orElseThrow(() -> new IllegalStateException("No successful payment found for order: " + orderId));
